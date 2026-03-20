@@ -48,7 +48,7 @@ async function main() {
 
   // Load model — use local path for dev, HuggingFace CDN for production (GitHub Pages)
   log('Loading model weights (74.6 MB)...');
-  const HF_BASE = 'https://huggingface.co/hexgrad/Kitten-TTS/resolve/main';
+  const HF_BASE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main';
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   const modelUrl = isLocal
     ? '/models/kitten-tts-mini-0.8/kitten_tts_mini_v0_8.onnx'
