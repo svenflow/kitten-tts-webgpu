@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kitten TTS — WebGPU</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    h1 { margin-bottom: 0.5rem; font-size: 2rem; }
+    .subtitle { color: #888; margin-bottom: 2rem; font-size: 0.95rem; }
+    .subtitle a { color: #4ecdc4; text-decoration: none; }
+    .subtitle a:hover { text-decoration: underline; }
+    .controls {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 600px;
+      width: 100%;
+    }
+    label { display: block; margin-bottom: 0.5rem; color: #aaa; font-size: 0.9rem; }
+    textarea {
+      width: 100%;
+      height: 80px;
+      background: #0f3460;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #eee;
+      padding: 0.75rem;
+      font-size: 1rem;
+      resize: vertical;
+      margin-bottom: 1rem;
+      font-family: inherit;
+    }
+    select, input[type="range"] {
+      width: 100%;
+      background: #0f3460;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #eee;
+      padding: 0.5rem;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+    button {
+      width: 100%;
+      padding: 1rem;
+      background: #e94560;
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 1.1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #c73e54; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    #log {
+      background: #0a0a1a;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1rem;
+      max-width: 600px;
+      width: 100%;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.85rem;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .log-entry { margin-bottom: 0.25rem; }
+    .log-info { color: #4ecdc4; }
+    .log-error { color: #e94560; }
+    .log-success { color: #95e77e; }
+    audio { width: 100%; margin-top: 1rem; }
+    .speed-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .speed-row label { margin: 0; flex-shrink: 0; }
+    .speed-row input { margin: 0; flex: 1; }
+    .speed-val { color: #4ecdc4; min-width: 3ch; }
+    .badges { margin-bottom: 1.5rem; display: flex; gap: 0.5rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-gpu { background: #1a472a; color: #95e77e; }
+    .badge-size { background: #2a1a47; color: #c49eff; }
+    .badge-deps { background: #47351a; color: #ffcc4e; }
+  </style>
+</head>
+<body>
+  <h1>Kitten TTS — WebGPU</h1>
+  <p class="subtitle">80M parameter text-to-speech, running entirely on your GPU. <a href="https://github.com/svenflow/webgpu-kitten-tts">GitHub</a></p>
+  <div class="badges">
+    <span class="badge badge-gpu">WebGPU</span>
+    <span class="badge badge-size">74.6 MB</span>
+    <span class="badge badge-deps">0 dependencies</span>
+  </div>
+
+  <div class="controls">
+    <label for="text">Text to speak:</label>
+    <textarea id="text">Hello, this is a test.</textarea>
+
+    <label for="voice">Voice:</label>
+    <select id="voice">
+      <option value="Bella">Bella (F)</option>
+      <option value="Jasper">Jasper (M)</option>
+      <option value="Luna">Luna (F)</option>
+      <option value="Bruno">Bruno (M)</option>
+      <option value="Rosie">Rosie (F)</option>
+      <option value="Hugo">Hugo (M)</option>
+      <option value="Kiki">Kiki (F)</option>
+      <option value="Leo">Leo (M)</option>
+    </select>
+
+    <div class="speed-row">
+      <label for="speed">Speed:</label>
+      <input type="range" id="speed" min="0.5" max="2.0" step="0.1" value="1.0">
+      <span class="speed-val" id="speed-val">1.0</span>
+    </div>
+
+    <button id="generate" disabled>Loading model...</button>
+  </div>
+
+  <div id="log"></div>
+  <audio id="audio" controls style="display:none"></audio>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
