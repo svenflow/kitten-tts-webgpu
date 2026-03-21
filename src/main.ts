@@ -76,6 +76,16 @@ window.addEventListener('webgpu-error', ((e: CustomEvent) => {
 }) as EventListener);
 
 // ── Logging ──
+// Show crash log from previous session (survives page refresh)
+const prevCrashLog = localStorage.getItem('kitten-tts-crash-log');
+if (prevCrashLog) {
+  localStorage.removeItem('kitten-tts-crash-log');
+  const banner = document.createElement('div');
+  banner.style.cssText = 'background:#ff000033;color:#ff6b6b;padding:12px;margin:8px 0;border-radius:8px;font-family:monospace;font-size:11px;white-space:pre-wrap;';
+  banner.textContent = '⚠️ Previous session crashed. Last log:\n' + prevCrashLog;
+  document.querySelector('.container')?.prepend(banner);
+}
+
 function log(msg: string, type: 'info' | 'error' | 'success' = 'info') {
   const entry = document.createElement('div');
   entry.className = `log-entry log-${type}`;
@@ -84,6 +94,14 @@ function log(msg: string, type: 'info' | 'error' | 'success' = 'info') {
   logContent.appendChild(entry);
   logContent.scrollTop = logContent.scrollHeight;
   console.log(`[${type}] ${msg}`);
+  // Persist to localStorage so we survive crash-refreshes
+  const logs = localStorage.getItem('kitten-tts-crash-log') || '';
+  localStorage.setItem('kitten-tts-crash-log', logs + `[${time}] ${msg}\n`);
+}
+
+// Clear crash log when generation completes successfully
+function clearCrashLog() {
+  localStorage.removeItem('kitten-tts-crash-log');
 }
 
 // ── Character count ──
@@ -387,6 +405,7 @@ generateBtn.addEventListener('click', async () => {
     outputSection.classList.add('visible');
     audioEl.play().catch(() => {});
     log('Done!');
+    clearCrashLog();
 
   } catch (e) {
     log(`Generation failed: ${e}`, 'error');
