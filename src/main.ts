@@ -403,11 +403,6 @@ generateBtn.addEventListener('click', async () => {
     timingIndicator.textContent = `${elapsed}s`;
     timingIndicator.classList.add('visible');
 
-    // Draw waveform (DPR capped at 2 in drawWaveform to avoid huge canvas on 3x retina)
-    log('Drawing waveform...');
-    drawWaveform(waveform);
-    log('Waveform drawn');
-
     // Create audio blob
     log('Encoding WAV...');
     const wavBlob = float32ToWav(waveform, 24000);
@@ -415,8 +410,14 @@ generateBtn.addEventListener('click', async () => {
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlobUrl = URL.createObjectURL(wavBlob);
 
-    // Show output section BEFORE setting audio src (avoid simultaneous allocs)
+    // Show output section BEFORE drawing waveform (canvas needs non-zero dimensions)
     outputSection.classList.add('visible');
+
+    // Draw waveform after output section is visible so canvas has dimensions
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    log('Drawing waveform...');
+    drawWaveform(waveform);
+    log('Waveform drawn');
 
     // On mobile: don't auto-play (avoids audio buffer allocation on top of
     // GPU memory), and don't auto-open log (the CSS transition from closed→open
