@@ -70,11 +70,12 @@ export class KittenTTSEngine {
     this._stageStart = performance.now();
   }
 
-  /** End timing and record the stage duration (includes GPU sync). */
+  /** End timing and record the stage duration (includes GPU sync).
+   *  ALWAYS flushes the batch encoder to keep GPU memory bounded (critical for iOS). */
   private async endStage(name: string): Promise<void> {
-    if (!this.profile) return;
-    // Flush any batched dispatches and wait for completion
+    // Always flush at stage boundaries — keeps GPU memory bounded even when not profiling
     this.flushBatchEncoder();
+    if (!this.profile) return;
     await this.device.queue.onSubmittedWorkDone();
     const elapsed = performance.now() - this._stageStart;
     this.timings.set(name, elapsed);
