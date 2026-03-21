@@ -1105,9 +1105,8 @@ export class KittenTTSEngine {
     this.deferDestroy(asrResOut);
     // bertProjOut — already in predIntermediates[0], destroyed at line ~803
     this.deferDestroy(sharedTransposed);  // leaked: never in predIntermediates
-    // Final flush of any remaining uniform buffers and deferred buffer destructions
+    // Final flush — submits pending dispatches and destroys deferred buffers
     this.flushBatchEncoder();
-    this.flushPendingDestroys();
 
     return { waveform: finalWaveform, duration: durations };
   }
@@ -1310,17 +1309,16 @@ export class KittenTTSEngine {
     if (buffer) this.pendingDestroys.push(buffer);
   }
 
-  /** Flush the shared batch encoder and submit all pending work. */
+  /** Flush the shared batch encoder, submit all pending work, and destroy deferred buffers.
+   *  Once submit() is called, the GPU has captured all buffer references — it's safe to
+   *  destroy immediately. This keeps peak GPU memory low (critical for iOS). */
   private flushBatchEncoder(): void {
     if (this.batchEncoder) {
       this.device.queue.submit([this.batchEncoder.finish()]);
       this.batchEncoder = null;
     }
     this.flushUniformBuffers();
-  }
-
-  /** Destroy all deferred buffers (call after final readBuffer in generate). */
-  private flushPendingDestroys(): void {
+    // Destroy deferred buffers immediately after submit — GPU has captured references
     for (const buf of this.pendingDestroys) buf.destroy();
     this.pendingDestroys = [];
   }
