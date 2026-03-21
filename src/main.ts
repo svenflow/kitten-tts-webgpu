@@ -341,6 +341,15 @@ generateBtn.addEventListener('click', async () => {
 
     log(`Generated ${waveform.length} samples (${duration}s) in ${elapsed}s`, 'success');
 
+    // Log per-stage timing breakdown
+    if (engine.lastTimings.length > 0) {
+      log('── Stage Timings ──');
+      for (const { name, ms } of engine.lastTimings) {
+        const bar = '█'.repeat(Math.max(1, Math.round(ms / 50)));
+        log(`  ${name}: ${ms.toFixed(0)}ms ${bar}`);
+      }
+    }
+
     // Store for resize redraw
     lastSamples = waveform;
 

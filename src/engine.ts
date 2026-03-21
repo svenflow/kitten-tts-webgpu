@@ -76,13 +76,18 @@ export class KittenTTSEngine {
     this.timings.set(name, elapsed);
   }
 
-  /** Print timing summary to console. */
+  /** Last timing report from generate(), available after each call. */
+  public lastTimings: { name: string; ms: number }[] = [];
+
+  /** Print timing summary to console and store for external access. */
   private printTimings(): void {
     if (!this.profile) return;
+    this.lastTimings = [];
     let total = 0;
     const lines: string[] = [];
     for (const [name, ms] of this.timings) {
       total += ms;
+      this.lastTimings.push({ name, ms });
       lines.push(`  ${name.padEnd(35)} ${ms.toFixed(1).padStart(8)} ms`);
     }
     console.log(`\n[KittenTTS] ── Timing Report ──`);
