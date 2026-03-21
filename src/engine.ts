@@ -2955,6 +2955,26 @@ export class KittenTTSEngine {
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
   }
 
+  /** Free GPU weight buffers to release VRAM (~75MB).
+   *  Call after generation to prevent iOS Safari jetsam crashes.
+   *  Weights must be reloaded via loadModel() before next generate(). */
+  freeWeights(): void {
+    let freed = 0;
+    for (const tensor of this.weights.values()) {
+      freed += tensor.buffer.size;
+      tensor.buffer.destroy();
+    }
+    this.weights.clear();
+    // Also clear cached sin generator weights (CPU-side)
+    this.sinGenWeights = null;
+    console.log(`[KittenTTS] Freed ${(freed / 1024 / 1024).toFixed(1)}MB GPU weight buffers`);
+  }
+
+  /** Check if model weights are loaded (GPU buffers alive). */
+  get weightsLoaded(): boolean {
+    return this.weights.size > 0;
+  }
+
   /** Destroy all GPU resources. */
   destroy(): void {
     for (const tensor of this.weights.values()) {

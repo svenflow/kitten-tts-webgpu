@@ -58,6 +58,8 @@ const audioEl = document.getElementById('audio-el') as HTMLAudioElement;
 let engine: KittenTTSEngine | null = null;
 let lastSamples: Float32Array | null = null;
 let lastBlobUrl: string | null = null;
+let modelUrl: string = '';
+let voicesUrl: string = '';
 
 // Handle GPU device loss
 window.addEventListener('webgpu-device-lost', ((e: CustomEvent) => {
@@ -298,10 +300,10 @@ async function loadModel() {
   // Model URLs
   const HF_BASE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main';
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  const modelUrl = isLocal
+  modelUrl = isLocal
     ? '/models/kitten-tts-mini-0.8/kitten_tts_mini_v0_8.onnx'
     : `${HF_BASE}/kitten_tts_mini_v0_8.onnx`;
-  const voicesUrl = isLocal
+  voicesUrl = isLocal
     ? '/models/kitten-tts-mini-0.8/voices.npz'
     : `${HF_BASE}/voices.npz`;
 
@@ -359,6 +361,16 @@ generateBtn.addEventListener('click', async () => {
   log(`Generating: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}" (voice=${voice}, speed=${speed}×)`);
 
   try {
+    // Re-load weights if they were freed after previous generation (mobile VRAM optimization)
+    if (!engine.weightsLoaded) {
+      log('Reloading model weights from cache...');
+      generateBtn.textContent = 'Loading weights…';
+      const reloadStart = performance.now();
+      await engine.loadModel(modelUrl, voicesUrl);
+      const reloadMs = (performance.now() - reloadStart).toFixed(0);
+      log(`Weights reloaded in ${reloadMs}ms (from browser cache)`, 'success');
+    }
+
     const { ids: inputIds, method } = await textToInputIds(text);
     log(`Phonemized: ${inputIds.length} tokens (${method})`);
 
@@ -403,16 +415,10 @@ generateBtn.addEventListener('click', async () => {
     timingIndicator.textContent = `${elapsed}s`;
     timingIndicator.classList.add('visible');
 
-    // Skip waveform canvas on mobile to avoid OOM crashes
-    if (!isMobile) {
-      log('Drawing waveform...');
-      drawWaveform(waveform);
-      log('Waveform drawn');
-    } else {
-      log('Skipping waveform canvas (mobile)');
-      // Hide the waveform container entirely on mobile
-      waveformCanvas.style.display = 'none';
-    }
+    // Draw waveform (DPR capped at 2 in drawWaveform to avoid huge canvas on 3x retina)
+    log('Drawing waveform...');
+    drawWaveform(waveform);
+    log('Waveform drawn');
 
     // Create audio blob
     log('Encoding WAV...');
@@ -420,6 +426,13 @@ generateBtn.addEventListener('click', async () => {
     log(`WAV encoded: ${(wavBlob.size / 1024).toFixed(0)}KB`);
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlobUrl = URL.createObjectURL(wavBlob);
+
+    // Free GPU weight buffers on mobile to prevent iOS jetsam crash (~75MB freed).
+    // Weights will be reloaded from browser HTTP cache before next generation.
+    if (isMobile && engine) {
+      engine.freeWeights();
+      log('Freed GPU weight buffers to reduce VRAM pressure', 'success');
+    }
 
     // Show output section BEFORE setting audio src (avoid simultaneous allocs)
     outputSection.classList.add('visible');
