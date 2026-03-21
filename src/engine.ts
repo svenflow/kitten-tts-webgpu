@@ -890,6 +890,9 @@ export class KittenTTSEngine {
       // Debug: decoder block output (matches ONNX /decoder/decode.{i}/Div_output_0)
       await this.captureDebug(`/decoder/decode.${di}/Div_output_0`, decodeOut, [1, outCh, decFrames]);
 
+      // Flush per decode block to free intermediates (prevents iOS jetsam)
+      this.flushBatchEncoder();
+
       if (di < 3) {
         // Build next decode input: concat decode output[outCh] + asr_res[64] + F0/N[2]
         decodeInput2 = this.buildDecodeInput(decodeOut, f0Conv, nConv, asrResOut ?? null, outCh, decFrames);
@@ -970,6 +973,9 @@ export class KittenTTSEngine {
     this.deferDestroy(nr0Out);
     genFeatures = noisyUps0;
 
+    // Flush to free noise_res.0 intermediates (prevents iOS jetsam)
+    this.flushBatchEncoder();
+
     // ── resblocks.0 + resblocks.1: parallel residual blocks, output averaged ──
     const resblock0 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.0');
     const resblock1 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.1');
@@ -984,6 +990,9 @@ export class KittenTTSEngine {
     this.deferDestroy(resSum0);
     this.deferDestroy(genFeatures);
     genFeatures = resAvg0;
+
+    // Flush to free resblocks.0+1 intermediates before ups.1 upsample
+    this.flushBatchEncoder();
 
     // ── LeakyReLU(0.1) before ups.1 (ONNX: LeakyRelu_1 after resblock average) ──
     const preUps1Leaky = this.createEmptyBuffer(genChannels * genLength, 'pre_ups1_leaky');
@@ -1004,6 +1013,9 @@ export class KittenTTSEngine {
     genChannels = 128;
     genLength = ups1Length;
     console.log(`[KittenTTS] ups.1 output: [${genChannels}, ${genLength}]`);
+
+    // Flush to free pre-upsample buffers before high-res processing
+    this.flushBatchEncoder();
 
     // Debug: ups.1 output
     await this.captureDebug('/decoder/generator/ups.1/ConvTranspose_output_0', genFeatures, [1, genChannels, genLength]);
@@ -1040,8 +1052,13 @@ export class KittenTTSEngine {
     this.deferDestroy(nr1Out);
     genFeatures = noisyPad;
 
+    // Flush to free noise_res.1 intermediates before resblocks.2+3 (high-res)
+    this.flushBatchEncoder();
+
     // ── resblocks.2 + resblocks.3: parallel residual blocks, output averaged ──
     const resblock2 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.2');
+    // Flush between resblocks to halve peak memory at high resolution
+    this.flushBatchEncoder();
     const resblock3 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.3');
 
     const resSum1 = this.createEmptyBuffer(genChannels * genLength, 'res_sum1');
@@ -1054,6 +1071,9 @@ export class KittenTTSEngine {
     this.deferDestroy(genFeatures);
     genFeatures = resAvg1;
 
+    // Flush to free resblocks.2+3 intermediates before conv_post
+    this.flushBatchEncoder();
+
     // ── LeakyReLU + conv_post: conv(128→22, k=7) ──
     const postLeaky = this.createEmptyBuffer(genChannels * genLength, 'post_leaky');
     this.dispatchLeakyRelu(genFeatures, postLeaky, genChannels * genLength, 0.01);
@@ -1065,7 +1085,7 @@ export class KittenTTSEngine {
     this.dispatchConv1d(postLeaky, convPostWeight.buffer, convPostBias.buffer, convPostOut, 128, 22, 7, genLength, genLength, 3, 1, 1, true);
     this.deferDestroy(postLeaky);
 
-    this.endBatch(); // Flush batch 2: noise + resblocks + ups.1 + conv_post
+    this.endBatch(); // Flush final conv_post
 
     // Debug: conv_post output
     await this.captureDebug('/decoder/generator/conv_post/Conv_output_0', convPostOut, [1, 22, genLength]);
@@ -2416,8 +2436,10 @@ export class KittenTTSEngine {
       if (current !== input) iterBufs.push(current);
       current = resOut;
 
-      // Defer destruction — buffers referenced by pending shared encoder
+      // Flush + destroy per iteration to keep peak GPU memory low.
+      // Without this, 3 iterations at 128×17881 = ~275MB accumulated.
       for (const buf of iterBufs) this.deferDestroy(buf);
+      this.flushBatchEncoder();
     }
 
     return current;
