@@ -32,11 +32,10 @@ export class KittenTTSEngine {
   /** Uniform buffers created during dispatch, cleaned up after submit. */
   private pendingUniformBuffers: GPUBuffer[] = [];
 
-  /** Command encoder batching: accumulate multiple compute passes in one encoder to reduce submit count.
-   *  Each dispatch gets its own compute pass (for correct barriers), but they share one encoder.
-   *  This reduces queue.submit() calls from ~300 to ~10, critical for iOS Metal stability. */
-  private _batchEncoder: GPUCommandEncoder | null = null;
-  private _batchCount = 0;
+  /** Command buffer batching: collect finished command buffers and submit them together.
+   *  Each dispatch gets its own encoder (Safari doesn't like shared encoders with multiple passes).
+   *  Batching the submit() call reduces overhead from ~300 individual submits to ~10. */
+  private _pendingCommandBuffers: GPUCommandBuffer[] = [];
   private readonly BATCH_LIMIT = 32; // Flush every N dispatches
 
   /** Cached CPU copies of sin generator weights (avoid readBuffer every inference). */
@@ -1279,12 +1278,11 @@ export class KittenTTSEngine {
     this.flushBatch();
   }
 
-  /** Flush accumulated command encoder to GPU. */
+  /** Flush accumulated command buffers to GPU. */
   private flushBatch(): void {
-    if (this._batchEncoder) {
-      this.device.queue.submit([this._batchEncoder.finish()]);
-      this._batchEncoder = null;
-      this._batchCount = 0;
+    if (this._pendingCommandBuffers.length > 0) {
+      this.device.queue.submit(this._pendingCommandBuffers);
+      this._pendingCommandBuffers = [];
     }
     this.flushUniformBuffers();
   }
@@ -1302,20 +1300,17 @@ export class KittenTTSEngine {
   ): void {
     const { pipeline } = this.pipelines.get(pipelineName)!;
 
-    // Accumulate dispatches in a shared command encoder (separate compute passes for correct barriers).
-    // This reduces queue.submit() from ~300 to ~10, critical for iOS Metal stability.
-    if (!this._batchEncoder) {
-      this._batchEncoder = this.device.createCommandEncoder();
-    }
-
-    const pass = this._batchEncoder.beginComputePass();
+    // Each dispatch gets its own encoder (Safari rejects shared encoders with multiple passes).
+    // Command buffers are collected and submitted together to reduce queue.submit() overhead.
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
     pass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
     pass.end();
 
-    this._batchCount++;
-    if (this._batchCount >= this.BATCH_LIMIT) {
+    this._pendingCommandBuffers.push(encoder.finish());
+    if (this._pendingCommandBuffers.length >= this.BATCH_LIMIT) {
       this.flushBatch();
     }
   }
