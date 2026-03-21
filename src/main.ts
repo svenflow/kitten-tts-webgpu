@@ -39,6 +39,22 @@ let engine: KittenTTSEngine | null = null;
 let lastSamples: Float32Array | null = null;
 let lastBlobUrl: string | null = null;
 
+// Handle GPU device loss
+window.addEventListener('webgpu-device-lost', ((e: CustomEvent) => {
+  const info = e.detail;
+  log(`GPU device lost: ${info.reason} — ${info.message}`, 'error');
+  generateBtn.disabled = true;
+  generateBtn.textContent = 'GPU Lost — Reload Page';
+  // Auto-open log so user can see the error
+  if (!logContent.classList.contains('open')) logToggle.click();
+}) as EventListener);
+
+// Handle uncaptured GPU errors
+window.addEventListener('webgpu-error', ((e: CustomEvent) => {
+  log(`GPU error: ${e.detail}`, 'error');
+  if (!logContent.classList.contains('open')) logToggle.click();
+}) as EventListener);
+
 // ── Logging ──
 function log(msg: string, type: 'info' | 'error' | 'success' = 'info') {
   const entry = document.createElement('div');

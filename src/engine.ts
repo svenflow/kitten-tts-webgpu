@@ -114,11 +114,30 @@ export class KittenTTSEngine {
     const adapter = await navigator.gpu?.requestAdapter();
     if (!adapter) throw new Error('WebGPU not available');
 
+    // Query adapter limits and request what's available (iOS has lower limits)
+    const adapterLimits = adapter.limits;
+    const maxBuf = Math.min(256 * 1024 * 1024, adapterLimits.maxStorageBufferBindingSize);
+    const maxSize = Math.min(256 * 1024 * 1024, adapterLimits.maxBufferSize);
+    console.log(`[KittenTTS] Adapter limits: maxStorageBuffer=${maxBuf}, maxBuffer=${maxSize}`);
+
     this.device = await adapter.requestDevice({
       requiredLimits: {
-        maxStorageBufferBindingSize: 256 * 1024 * 1024,
-        maxBufferSize: 256 * 1024 * 1024,
+        maxStorageBufferBindingSize: maxBuf,
+        maxBufferSize: maxSize,
       },
+    });
+
+    // Handle device loss gracefully
+    this.device.lost.then((info) => {
+      console.error(`[KittenTTS] Device lost: ${info.reason} — ${info.message}`);
+      window.dispatchEvent(new CustomEvent('webgpu-device-lost', { detail: info }));
+    });
+
+    // Catch uncaptured GPU errors (shader compilation failures, OOM, etc.)
+    this.device.addEventListener('uncapturederror', (event: Event) => {
+      const e = event as GPUUncapturedErrorEvent;
+      console.error(`[KittenTTS] GPU error: ${e.error.message}`);
+      window.dispatchEvent(new CustomEvent('webgpu-error', { detail: e.error.message }));
     });
 
     this.compileShaders();
@@ -1253,6 +1272,9 @@ export class KittenTTSEngine {
 
   /** Read buffer contents back to CPU. */
   private async readBuffer(buffer: GPUBuffer, size: number): Promise<Float32Array> {
+    // Ensure all previous GPU work is done before reading
+    await this.device.queue.onSubmittedWorkDone();
+
     const staging = this.device.createBuffer({
       size: size * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
