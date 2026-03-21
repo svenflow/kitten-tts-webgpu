@@ -136,7 +136,14 @@ export async function textToPhonemesEspeak(text: string): Promise<string> {
  */
 export async function textToInputIds(text: string): Promise<{ ids: number[]; method: 'wasm' | 'dictionary' }> {
   try {
-    const phonemes = await textToPhonemesEspeak(text);
+    // Race WASM phonemizer against a timeout — on Safari/iOS the WASM worker
+    // can hang indefinitely without throwing, so we need a hard cutoff.
+    const phonemes = await Promise.race([
+      textToPhonemesEspeak(text),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('WASM phonemizer timeout (5s)')), 5000)
+      ),
+    ]);
     if (phonemes) {
       return { ids: phonemesToInputIds(phonemes), method: 'wasm' };
     }
