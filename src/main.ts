@@ -344,10 +344,14 @@ generateBtn.addEventListener('click', async () => {
     // Log per-stage timing breakdown
     if (engine.lastTimings.length > 0) {
       log('── Stage Timings ──');
+      const maxMs = Math.max(...engine.lastTimings.map(t => t.ms));
       for (const { name, ms } of engine.lastTimings) {
-        const bar = '█'.repeat(Math.max(1, Math.round(ms / 50)));
+        const barLen = Math.max(1, Math.round((ms / Math.max(maxMs, 1)) * 20));
+        const bar = '█'.repeat(barLen);
         log(`  ${name}: ${ms.toFixed(0)}ms ${bar}`);
       }
+      // Auto-open log to show timings
+      if (!logContent.classList.contains('open')) logToggle.click();
     }
 
     // Store for resize redraw

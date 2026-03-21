@@ -97,9 +97,9 @@ export class KittenTTSEngine {
     this.timings.clear();
   }
 
-  /** Capture a GPU buffer's contents as a named debug activation. */
+  /** Capture a GPU buffer's contents as a named debug activation. No-op when debugCapture is off. */
   private async captureDebug(name: string, buffer: GPUBuffer, shape: number[]): Promise<void> {
-    if (!this.debugCapture) return;
+    if (!this.debugCapture) return; // Early return — skips all GPU reads
     // Must flush any batched work before reading back
     this.endBatch();
     const size = shape.reduce((a, b) => a * b, 1);
@@ -808,12 +808,9 @@ export class KittenTTSEngine {
     concat512f0.destroy();
     await this.captureDebug('/decoder/Concat_output_0', decoderInput, [1, 514, baseFrames]);
 
-    // Cleanup predictor intermediates and sync GPU to reclaim memory before decoder
+    // Cleanup predictor intermediates (no sync needed — GPU handles ordering)
     for (const buf of predIntermediates) buf.destroy();
     for (const buf of f0Intermediates) buf.destroy();
-    this.flushBatch();
-    await this.device.queue.onSubmittedWorkDone();
-    // sharedTransposed already destroyed via predIntermediates (pushed on N predictor iteration 0)
     nProjOut.destroy();
     bertOutput.destroy();
 
@@ -880,10 +877,6 @@ export class KittenTTSEngine {
     // Assign totalFrames to the new doubled value for the generator
     totalFrames = decFrames;
     // decodeOut is the final decoder output [512, totalFrames] (after pool doubling)
-    this.endBatch(); // Flush decoder work
-    // GPU sync checkpoint: let Metal reclaim destroyed buffers before HiFi-GAN
-    // Critical for iOS where GPU memory is limited
-    await this.device.queue.onSubmittedWorkDone();
     console.log(`[KittenTTS] Decoder output: [512, ${totalFrames}]`);
 
     await this.endStage('Decoder (5 blocks)');
@@ -951,10 +944,7 @@ export class KittenTTSEngine {
     genFeatures = noisyUps0;
 
     // ── resblocks.0 + resblocks.1: parallel residual blocks, output averaged ──
-    // Run sequentially with sync between them to limit peak GPU memory on iOS
     const resblock0 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.0');
-    this.flushBatch();
-    await this.device.queue.onSubmittedWorkDone();
     const resblock1 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.1');
 
     // Average: (resblock0 + resblock1) / 2
@@ -1023,16 +1013,8 @@ export class KittenTTSEngine {
     nr1Out.destroy();
     genFeatures = noisyPad;
 
-    // GPU sync checkpoint before the large resblocks (128 × ~17881 — biggest memory pressure)
-    this.flushBatch();
-    await this.device.queue.onSubmittedWorkDone();
-
     // ── resblocks.2 + resblocks.3: parallel residual blocks, output averaged ──
-    // Run sequentially with sync between them to limit peak GPU memory on iOS
     const resblock2 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.2');
-    // Sync: let Metal reclaim resblock2's destroyed intermediates before resblock3
-    this.flushBatch();
-    await this.device.queue.onSubmittedWorkDone();
     const resblock3 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.3');
 
     const resSum1 = this.createEmptyBuffer(genChannels * genLength, 'res_sum1');
@@ -1272,24 +1254,45 @@ export class KittenTTSEngine {
     return w;
   }
 
+  /** Shared command encoder for batching dispatches. */
+  private batchEncoder: GPUCommandEncoder | null = null;
+  private batchPass: GPUComputePassEncoder | null = null;
+  private batchDispatchCount = 0;
+
   /** Start batching — flush pending uniform buffers. */
   private beginBatch(): void {
     this.flushUniformBuffers();
   }
 
-  /** End batching — flush pending uniform buffers. */
+  /** End batching — flush pending uniform buffers and submit. */
   private endBatch(): void {
+    this.submitBatch();
     this.flushUniformBuffers();
   }
 
   /** Flush pending state (alias for sync points). */
   private flushBatch(): void {
+    this.submitBatch();
     this.flushUniformBuffers();
+  }
+
+  /** Submit the current batch of dispatches. */
+  private submitBatch(): void {
+    if (this.batchPass) {
+      this.batchPass.end();
+      this.batchPass = null;
+    }
+    if (this.batchEncoder) {
+      this.device.queue.submit([this.batchEncoder.finish()]);
+      this.batchEncoder = null;
+      this.batchDispatchCount = 0;
+    }
   }
 
   /**
    * Execute a single dispatch on a pipeline.
-   * If batching is active, appends to the shared pass. Otherwise creates a one-off submit.
+   * Batches dispatches into a shared command encoder for minimal submit overhead.
+   * Submits every 256 dispatches to avoid excessively large command buffers.
    */
   private dispatchSingle(
     pipelineName: string,
@@ -1300,20 +1303,30 @@ export class KittenTTSEngine {
   ): void {
     const { pipeline } = this.pipelines.get(pipelineName)!;
 
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
+    // Start new batch if needed, or if we've accumulated too many dispatches
+    if (!this.batchEncoder || this.batchDispatchCount >= 256) {
+      this.submitBatch();
+      this.batchEncoder = this.device.createCommandEncoder();
+    }
+
+    // Start new compute pass if needed (each pass can hold many dispatches)
+    if (!this.batchPass) {
+      this.batchPass = this.batchEncoder!.beginComputePass();
+    }
+
+    this.batchPass.setPipeline(pipeline);
+    this.batchPass.setBindGroup(0, bindGroup);
+    this.batchPass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
+    this.batchDispatchCount++;
+
     this.flushUniformBuffers();
   }
 
   /** Read buffer contents back to CPU. */
   private async readBuffer(buffer: GPUBuffer, size: number): Promise<Float32Array> {
-    // Flush any batched commands before reading back
-    this.flushBatch();
+    // Submit any batched dispatches before reading back
+    this.submitBatch();
+    this.flushUniformBuffers();
     // Ensure all previous GPU work is done before reading
     await this.device.queue.onSubmittedWorkDone();
 
