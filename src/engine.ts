@@ -1565,11 +1565,11 @@ export class KittenTTSEngine {
       this.debugBertBuffers = { normedEmb, projected: intermediates.find(b => b.label === 'bert_projected') || null, hidden, seqLen, embedDim, hiddenSize, layerBuffers: debugLayerBufs };
     }
 
-    // Cleanup all intermediate and uniform buffers
+    // Cleanup all intermediate and uniform buffers — defer since shared encoder may reference them
     const keepLabels = this.debugCapture ? new Set([...debugLayerBufs.keys(), 'bert_projected', 'bert_emb_ln']) : null;
     for (const buf of intermediates) {
       if (keepLabels?.has(buf.label)) continue; // keep for debug
-      buf.destroy();
+      this.deferDestroy(buf);
     }
     this.flushUniformBuffers();
 
@@ -1689,7 +1689,7 @@ export class KittenTTSEngine {
 
     // Cleanup intermediates — defer since buffers may be in pending batch encoder
     for (const buf of intermediates) {
-      buf.destroy();
+      this.deferDestroy(buf);
     }
 
     return lstmOut; // [seqLen, 2, 256] = [seqLen, 512]
@@ -2157,7 +2157,7 @@ export class KittenTTSEngine {
     }
 
     // Cleanup — defer destruction since buffers may be referenced by pending dispatches
-    for (const buf of intermediates) buf.destroy();
+    for (const buf of intermediates) this.deferDestroy(buf);
 
     return { output, outChannels, outLength: curLength };
   }
@@ -2284,7 +2284,7 @@ export class KittenTTSEngine {
     this.dispatchScale(rawSum, output, outChannels * curLength, SQRT2_INV);
     intermediates.push(rawSum);
 
-    for (const buf of intermediates) buf.destroy();
+    for (const buf of intermediates) this.deferDestroy(buf);
     return output;
   }
 
@@ -2309,14 +2309,14 @@ export class KittenTTSEngine {
     // Step 2: concat1[featureChannels+64] + f0[1]
     const concat2 = this.createEmptyBuffer((featureChannels + 65) * length, 'dec_concat2');
     this.dispatchConcatChannels(concat1, f0Conv, concat2, featureChannels + 64, 1, length);
-    concat1.destroy();
+    this.deferDestroy(concat1);
 
     // Step 3: concat2[featureChannels+65] + n[1]
     const output = this.createEmptyBuffer((featureChannels + 66) * length, 'dec_concat3');
     this.dispatchConcatChannels(concat2, nConv, output, featureChannels + 65, 1, length);
-    concat2.destroy();
+    this.deferDestroy(concat2);
 
-    if (!asrRes) asrBuf.destroy();
+    if (!asrRes) this.deferDestroy(asrBuf);
 
     return output;
   }
@@ -2414,7 +2414,7 @@ export class KittenTTSEngine {
       current = resOut;
 
       // Defer destruction — buffers may be referenced by pending dispatches in batch encoder
-      for (const buf of iterBufs) buf.destroy();
+      for (const buf of iterBufs) this.deferDestroy(buf);
     }
 
     return current;
