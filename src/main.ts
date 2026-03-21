@@ -365,15 +365,6 @@ generateBtn.addEventListener('click', async () => {
     const { ids: inputIds, method } = await textToInputIds(text);
     log(`Phonemized: ${inputIds.length} tokens (${method})`);
 
-    // On mobile: re-upload weights if they were freed after previous generation
-    // This prevents iOS Safari jetsam by keeping GPU memory low between runs
-    if (isMobile && engine.hasCachedWeights && !engine.weightsLoaded) {
-      log('Re-uploading model weights to GPU...');
-      generateBtn.textContent = 'Loading weights…';
-      await engine.reuploadWeights();
-      log('Weights re-uploaded');
-    }
-
     const start = performance.now();
     const { waveform } = await engine.generate(inputIds, voice, speed, text.length, (stage) => {
       generateBtn.textContent = stage;
@@ -443,14 +434,6 @@ generateBtn.addEventListener('click', async () => {
 
     log('Done!');
     clearCrashLog();
-
-    // On mobile: free GPU weight buffers to prevent iOS Safari jetsam on next gen.
-    // Weights are cached in CPU memory and re-uploaded before the next generate().
-    // This keeps GPU memory at ~0 between generations instead of ~75MB.
-    if (isMobile && engine.hasCachedWeights) {
-      await engine.freeGpuWeights();
-      log('GPU weights freed (cached for re-upload)');
-    }
 
   } catch (e) {
     log(`Generation failed: ${e}`, 'error');
