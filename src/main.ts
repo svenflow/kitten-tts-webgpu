@@ -361,16 +361,6 @@ generateBtn.addEventListener('click', async () => {
   log(`Generating: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}" (voice=${voice}, speed=${speed}×)`);
 
   try {
-    // Re-load weights if they were freed after previous generation (mobile VRAM optimization)
-    if (!engine.weightsLoaded) {
-      log('Reloading model weights from cache...');
-      generateBtn.textContent = 'Loading weights…';
-      const reloadStart = performance.now();
-      await engine.loadModel(modelUrl, voicesUrl);
-      const reloadMs = (performance.now() - reloadStart).toFixed(0);
-      log(`Weights reloaded in ${reloadMs}ms (from browser cache)`, 'success');
-    }
-
     const { ids: inputIds, method } = await textToInputIds(text);
     log(`Phonemized: ${inputIds.length} tokens (${method})`);
 
@@ -426,13 +416,6 @@ generateBtn.addEventListener('click', async () => {
     log(`WAV encoded: ${(wavBlob.size / 1024).toFixed(0)}KB`);
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlobUrl = URL.createObjectURL(wavBlob);
-
-    // Free GPU weight buffers on mobile to prevent iOS jetsam crash (~75MB freed).
-    // Weights will be reloaded from browser HTTP cache before next generation.
-    if (isMobile && engine) {
-      engine.freeWeights();
-      log('Freed GPU weight buffers to reduce VRAM pressure', 'success');
-    }
 
     // Show output section BEFORE setting audio src (avoid simultaneous allocs)
     outputSection.classList.add('visible');
