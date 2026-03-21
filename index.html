@@ -1,145 +1,560 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
   <title>Kitten TTS — WebGPU</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg-primary: #1e2028;
+      --bg-secondary: #252830;
+      --bg-tertiary: #2c2f3a;
+      --bg-input: #1a1c24;
+      --text-primary: #e8e9ed;
+      --text-secondary: #9a9ca6;
+      --text-muted: #8a8c96;
+      --amber: #e5a54b;
+      --amber-dim: #b8863d;
+      --amber-glow: rgba(229, 165, 75, 0.15);
+      --green: #6bbf7a;
+      --red: #d55b5b;
+      --border: #353845;
+      --border-light: #404354;
+      --font-ui: 'DM Sans', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --radius: 8px;
+      --radius-lg: 12px;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, system-ui, sans-serif;
-      background: #1a1a2e;
-      color: #eee;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem;
+
+    html, body {
+      height: 100%; height: 100dvh;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      overflow: hidden;
+      overscroll-behavior: none;
     }
-    h1 { margin-bottom: 0.5rem; font-size: 2rem; }
-    .subtitle { color: #888; margin-bottom: 2rem; font-size: 0.95rem; }
-    .subtitle a { color: #4ecdc4; text-decoration: none; }
-    .subtitle a:hover { text-decoration: underline; }
-    .controls {
-      background: #16213e;
-      border-radius: 12px;
-      padding: 2rem;
-      max-width: 600px;
-      width: 100%;
+
+    /* ── Focus rings ── */
+    :focus-visible {
+      outline: 2px solid var(--amber);
+      outline-offset: 2px;
     }
-    label { display: block; margin-bottom: 0.5rem; color: #aaa; font-size: 0.9rem; }
-    textarea {
-      width: 100%;
-      height: 80px;
-      background: #0f3460;
-      border: 1px solid #333;
-      border-radius: 8px;
-      color: #eee;
-      padding: 0.75rem;
-      font-size: 1rem;
-      resize: vertical;
-      margin-bottom: 1rem;
-      font-family: inherit;
+
+    /* ── Loading Screen ── */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: var(--bg-primary);
+      transition: opacity 0.4s ease, visibility 0.4s ease;
     }
-    select, input[type="range"] {
-      width: 100%;
-      background: #0f3460;
-      border: 1px solid #333;
-      border-radius: 8px;
-      color: #eee;
-      padding: 0.5rem;
-      font-size: 1rem;
-      margin-bottom: 1rem;
+    #loading-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+    .loading-icon {
+      width: 48px; height: 48px; margin-bottom: 20px;
+      color: var(--amber);
     }
-    button {
-      width: 100%;
-      padding: 1rem;
-      background: #e94560;
-      border: none;
-      border-radius: 8px;
-      color: white;
-      font-size: 1.1rem;
+    .loading-title {
+      font-family: var(--font-mono);
+      font-size: 20px; font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      letter-spacing: 0.5px;
+    }
+    .loading-subtitle {
+      font-size: 13px; color: var(--text-muted);
+      margin-bottom: 32px;
+    }
+    .progress-container { width: 320px; max-width: 80vw; }
+    .progress-bar-bg {
+      width: 100%; height: 4px;
+      background: var(--bg-tertiary);
+      border-radius: 2px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%;
+      background: var(--amber);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .progress-text {
+      font-family: var(--font-mono);
+      font-size: 12px; color: var(--text-muted);
+      margin-top: 10px; text-align: center;
+    }
+    .start-subtext {
+      font-size: 12px; color: var(--text-muted);
+      margin-top: 14px; line-height: 1.5; text-align: center;
+    }
+    #start-btn {
+      padding: 14px 48px;
+      font-family: var(--font-ui);
+      font-size: 16px; font-weight: 600;
+      background: var(--amber); color: #1a1a1a;
+      border: none; border-radius: var(--radius);
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background 0.2s, transform 0.1s;
     }
-    button:hover { background: #c73e54; }
-    button:disabled { background: #555; cursor: not-allowed; }
-    #log {
-      background: #0a0a1a;
-      border-radius: 8px;
-      padding: 1rem;
-      margin-top: 1rem;
-      max-width: 600px;
-      width: 100%;
-      font-family: 'SF Mono', Monaco, monospace;
-      font-size: 0.85rem;
-      max-height: 300px;
-      overflow-y: auto;
-      white-space: pre-wrap;
+    #start-btn:hover { background: #d4963f; }
+    #start-btn:active { transform: scale(0.97); }
+
+    .loading-links {
+      display: flex; align-items: center; justify-content: center; gap: 16px;
+      margin-top: 32px; padding-top: 24px;
+      border-top: 1px solid var(--border);
+      max-width: 340px;
     }
-    .log-entry { margin-bottom: 0.25rem; }
-    .log-info { color: #4ecdc4; }
-    .log-error { color: #e94560; }
-    .log-success { color: #95e77e; }
-    audio { width: 100%; margin-top: 1rem; }
-    .speed-row {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      margin-bottom: 1rem;
+    .loading-links a {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--text-secondary); text-decoration: none;
+      font-size: 13px; font-weight: 500; transition: color 0.2s;
     }
-    .speed-row label { margin: 0; flex-shrink: 0; }
-    .speed-row input { margin: 0; flex: 1; }
-    .speed-val { color: #4ecdc4; min-width: 3ch; }
-    .badges { margin-bottom: 1.5rem; display: flex; gap: 0.5rem; }
+    .loading-links a:hover { color: var(--text-primary); }
+    .loading-meta {
+      font-size: 11px; color: var(--text-muted);
+      margin-top: 12px; text-align: center;
+    }
+
+    /* ── App Layout ── */
+    #app {
+      display: flex; flex-direction: column;
+      height: 100vh; height: 100dvh;
+      opacity: 0; transition: opacity 0.4s ease;
+    }
+    #app.visible { opacity: 1; }
+
+    /* ── Header ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary);
+      flex-shrink: 0;
+    }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .header-title {
+      font-family: var(--font-mono);
+      font-size: 14px; font-weight: 500;
+    }
     .badge {
-      display: inline-block;
-      padding: 0.25rem 0.75rem;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      font-weight: 600;
+      font-family: var(--font-mono);
+      font-size: 10px; font-weight: 500;
+      padding: 2px 7px; border-radius: 4px;
+      background: var(--amber-glow);
+      color: var(--amber);
+      border: 1px solid rgba(229,165,75,0.25);
     }
-    .badge-gpu { background: #1a472a; color: #95e77e; }
-    .badge-size { background: #2a1a47; color: #c49eff; }
-    .badge-deps { background: #47351a; color: #ffcc4e; }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .header-right a {
+      font-size: 12px; color: var(--text-muted);
+      text-decoration: none; transition: color 0.2s;
+    }
+    .header-right a:hover { color: var(--text-secondary); }
+    #timing-indicator {
+      font-family: var(--font-mono);
+      font-size: 13px; font-weight: 500;
+      color: var(--amber);
+      opacity: 0; transition: opacity 0.3s ease;
+    }
+    #timing-indicator.visible { opacity: 1; }
+
+    /* ── Main Content ── */
+    main {
+      flex: 1; overflow-y: auto;
+      padding: 0;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    main::-webkit-scrollbar { width: 6px; }
+    main::-webkit-scrollbar-track { background: transparent; }
+    main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .content-inner {
+      width: 100%; max-width: 560px;
+      padding: 40px 20px 20px;
+    }
+
+    /* ── Text Input ── */
+    .input-section { margin-bottom: 16px; }
+    .input-section .input-header {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .input-section label {
+      font-size: 11px; font-weight: 500;
+      color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .char-count {
+      font-family: var(--font-mono);
+      font-size: 11px; color: var(--text-muted);
+    }
+    #text-input {
+      width: 100%; min-height: 100px; max-height: 240px;
+      padding: 14px 16px;
+      font-family: var(--font-ui); font-size: 15px; line-height: 1.6;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      outline: none; resize: vertical;
+    }
+    #text-input:focus { border-color: var(--amber-dim); }
+    #text-input::placeholder { color: var(--text-muted); }
+    .shortcut-hint {
+      font-family: var(--font-mono);
+      font-size: 10px; color: var(--text-muted);
+      margin-top: 4px; text-align: right;
+      opacity: 0.6;
+    }
+
+    /* ── Preset Chips ── */
+    .presets {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .preset-chip {
+      font-family: var(--font-ui);
+      font-size: 12px; font-weight: 500;
+      color: var(--text-secondary);
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 12px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .preset-chip:hover {
+      border-color: var(--amber-dim);
+      color: var(--amber);
+    }
+    .preset-chip.active {
+      border-color: var(--amber);
+      color: var(--amber);
+      background: var(--amber-glow);
+    }
+
+    /* ── Controls Row ── */
+    .controls-row {
+      display: flex; gap: 12px; margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .control-group {
+      display: flex; flex-direction: column; gap: 4px;
+      flex: 1; min-width: 120px;
+    }
+    .control-group label {
+      font-size: 11px; font-weight: 500;
+      color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .control-group select {
+      padding: 8px 10px;
+      font-family: var(--font-ui); font-size: 13px;
+      background: var(--bg-input); color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px; outline: none;
+      cursor: pointer;
+    }
+    .control-group select:focus { border-color: var(--amber-dim); }
+
+    /* Speed slider */
+    .speed-control {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .speed-control input[type="range"] {
+      flex: 1; height: 4px;
+      -webkit-appearance: none; appearance: none;
+      background: linear-gradient(
+        to right,
+        var(--amber) 0%,
+        var(--amber) var(--fill-pct, 33.3%),
+        var(--bg-tertiary) var(--fill-pct, 33.3%),
+        var(--bg-tertiary) 100%
+      );
+      border-radius: 2px; outline: none;
+      cursor: pointer;
+    }
+    .speed-control input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--amber);
+      border: none; cursor: pointer;
+      transition: transform 0.15s ease;
+    }
+    .speed-control input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+    .speed-val {
+      font-family: var(--font-mono);
+      font-size: 13px; color: var(--amber);
+      min-width: 32px; text-align: right;
+    }
+
+    /* ── Generate Button ── */
+    #generate-btn {
+      width: 100%; padding: 14px;
+      font-family: var(--font-ui);
+      font-size: 15px; font-weight: 600;
+      background: var(--amber); color: #1a1a1a;
+      border: none; border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      margin-bottom: 24px;
+    }
+    #generate-btn:hover { background: #d4963f; }
+    #generate-btn:active { transform: scale(0.98); }
+    #generate-btn:disabled {
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Waveform / Audio Output ── */
+    .output-section {
+      opacity: 0; transform: translateY(8px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      pointer-events: none;
+    }
+    .output-section.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+    .waveform-container {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .waveform-wrap {
+      position: relative;
+      cursor: pointer;
+    }
+    #waveform-canvas {
+      width: 100%; height: 80px;
+      display: block;
+      border-radius: 4px;
+    }
+    .playhead {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      width: 2px;
+      background: var(--text-primary);
+      border-radius: 1px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      pointer-events: none;
+    }
+    .playhead.active { opacity: 1; }
+
+    .audio-controls {
+      display: flex; align-items: center; gap: 10px;
+      margin-top: 10px;
+    }
+    .play-btn, .download-btn {
+      width: 36px; height: 36px;
+      background: var(--amber); border: none;
+      border-radius: 50%; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.2s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    .play-btn:hover, .download-btn:hover { background: #d4963f; }
+    .play-btn:active, .download-btn:active { transform: scale(0.95); }
+    .play-btn svg, .download-btn svg { fill: #1a1a1a; }
+    .download-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+    }
+    .download-btn:hover { background: var(--border); }
+    .download-btn svg { fill: var(--text-secondary); }
+
+    .audio-meta {
+      display: flex; gap: 16px; flex: 1;
+      font-family: var(--font-mono); font-size: 12px;
+    }
+    .audio-meta .label { color: var(--text-muted); }
+    .audio-meta .value { color: var(--text-secondary); }
+    .audio-meta .value.highlight { color: var(--amber); }
+
+    /* Hidden native audio element */
+    #audio-el { display: none; }
+
+    /* ── Log ── */
+    .log-section {
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    .log-toggle {
+      font-family: var(--font-mono);
+      font-size: 11px; color: var(--text-muted);
+      background: none; border: none;
+      cursor: pointer; padding: 4px 0;
+      transition: color 0.2s;
+    }
+    .log-toggle:hover { color: var(--text-secondary); }
+    #log-content {
+      max-height: 0; overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    #log-content.open { max-height: 300px; overflow-y: auto; }
+    #log-content::-webkit-scrollbar { width: 4px; }
+    #log-content::-webkit-scrollbar-track { background: transparent; }
+    #log-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .log-entry {
+      font-family: var(--font-mono);
+      font-size: 11px; line-height: 1.6;
+      padding: 1px 0;
+    }
+    .log-info { color: var(--text-muted); }
+    .log-success { color: var(--green); }
+    .log-error { color: var(--red); }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .content-inner { padding: 24px 14px 14px; }
+      header { padding: 10px 14px; }
+      .controls-row { gap: 8px; }
+      .control-group { min-width: 100px; }
+      #text-input { min-height: 80px; font-size: 14px; }
+      .audio-meta { gap: 10px; font-size: 11px; }
+      .shortcut-hint { display: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>Kitten TTS — WebGPU</h1>
-  <p class="subtitle">80M parameter text-to-speech, running entirely on your GPU. <a href="https://github.com/svenflow/webgpu-kitten-tts">GitHub</a></p>
-  <div class="badges">
-    <span class="badge badge-gpu">WebGPU</span>
-    <span class="badge badge-size">74.6 MB</span>
-    <span class="badge badge-deps">0 dependencies</span>
-  </div>
 
-  <div class="controls">
-    <label for="text">Text to speak:</label>
-    <textarea id="text">Hello, this is a test.</textarea>
+  <!-- Loading Screen -->
+  <div id="loading-screen" role="dialog" aria-label="Model loading">
+    <svg class="loading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3v3m0 12v3M5.636 5.636l2.121 2.121m8.486 8.486l2.121 2.121M3 12h3m12 0h3M5.636 18.364l2.121-2.121m8.486-8.486l2.121-2.121"/>
+      <circle cx="12" cy="12" r="4"/>
+    </svg>
+    <div class="loading-title">Kitten TTS</div>
+    <div class="loading-subtitle">80M parameter text-to-speech · WebGPU</div>
 
-    <label for="voice">Voice:</label>
-    <select id="voice">
-      <option value="Bella">Bella (F)</option>
-      <option value="Jasper">Jasper (M)</option>
-      <option value="Luna">Luna (F)</option>
-      <option value="Bruno">Bruno (M)</option>
-      <option value="Rosie">Rosie (F)</option>
-      <option value="Hugo">Hugo (M)</option>
-      <option value="Kiki">Kiki (F)</option>
-      <option value="Leo">Leo (M)</option>
-    </select>
-
-    <div class="speed-row">
-      <label for="speed">Speed:</label>
-      <input type="range" id="speed" min="0.5" max="2.0" step="0.1" value="1.0">
-      <span class="speed-val" id="speed-val">1.0</span>
+    <div id="start-section" style="text-align:center;">
+      <button id="start-btn">Start</button>
+      <div class="start-subtext">
+        Downloads 74.6 MB model to run locally in your browser.<br>
+        No data leaves your device.
+      </div>
+      <div class="loading-links">
+        <a href="https://github.com/svenflow/webgpu-kitten-tts" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+        <a href="https://huggingface.co/KittenML/kitten-tts-mini-0.8" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="6.5" r="1"/><circle cx="10.5" cy="6.5" r="1"/><path d="M5 10c0 0 1.5 2 3 2s3-2 3-2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          Model
+        </a>
+      </div>
+      <div class="loading-meta">zero dependencies · 8 voices · adjustable speed</div>
     </div>
 
-    <button id="generate" disabled>Loading model...</button>
+    <div id="progress-section" style="display:none;">
+      <div class="progress-container">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-fill" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div></div>
+        <div class="progress-text" id="progress-text" aria-live="polite">Initializing...</div>
+      </div>
+    </div>
   </div>
 
-  <div id="log"></div>
-  <audio id="audio" controls style="display:none"></audio>
+  <!-- App -->
+  <div id="app">
+    <header>
+      <div class="header-left">
+        <span class="header-title">Kitten TTS</span>
+        <span class="badge">WebGPU</span>
+      </div>
+      <div class="header-right">
+        <span id="timing-indicator" aria-live="polite"></span>
+        <a href="https://github.com/svenflow/webgpu-kitten-tts" target="_blank">GitHub</a>
+      </div>
+    </header>
+
+    <main>
+      <div class="content-inner">
+        <div class="input-section">
+          <div class="input-header">
+            <label for="text-input">Text</label>
+            <span class="char-count" id="char-count">45 chars</span>
+          </div>
+          <textarea id="text-input" placeholder="Type something to hear it spoken…">The quick brown fox jumps over the lazy dog.</textarea>
+          <div class="shortcut-hint" id="shortcut-hint"></div>
+        </div>
+
+        <div class="presets" role="group" aria-label="Sample texts">
+          <button class="preset-chip" data-text="Welcome to Kitten TTS! This model runs entirely in your browser.">Welcome</button>
+          <button class="preset-chip" data-text="The rain in Spain stays mainly in the plain.">Classic</button>
+          <button class="preset-chip" data-text="I can't believe how fast this is running on WebGPU!">Expressive</button>
+          <button class="preset-chip" data-text="In a hole in the ground there lived a hobbit.">Tolkien</button>
+        </div>
+
+        <div class="controls-row">
+          <div class="control-group">
+            <label for="voice-select">Voice</label>
+            <select id="voice-select">
+              <option value="Bella">Bella (F)</option>
+              <option value="Jasper">Jasper (M)</option>
+              <option value="Luna">Luna (F)</option>
+              <option value="Bruno">Bruno (M)</option>
+              <option value="Rosie">Rosie (F)</option>
+              <option value="Hugo">Hugo (M)</option>
+              <option value="Kiki">Kiki (F)</option>
+              <option value="Leo">Leo (M)</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label for="speed-slider">Speed</label>
+            <div class="speed-control">
+              <input type="range" id="speed-slider" min="0.5" max="2.0" step="0.1" value="1.0" aria-valuetext="1.0x">
+              <span class="speed-val" id="speed-val">1.0×</span>
+            </div>
+          </div>
+        </div>
+
+        <button id="generate-btn" disabled>Loading model…</button>
+
+        <div class="output-section" id="output-section">
+          <div class="waveform-container">
+            <div class="waveform-wrap" id="waveform-wrap">
+              <canvas id="waveform-canvas" role="img" aria-label="Waveform visualization of generated audio"></canvas>
+              <div class="playhead" id="playhead"></div>
+            </div>
+            <div class="audio-controls">
+              <button class="play-btn" id="play-btn" aria-label="Play audio">
+                <svg id="play-icon" width="14" height="14" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>
+                <svg id="pause-icon" width="14" height="14" viewBox="0 0 16 16" style="display:none"><rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/></svg>
+              </button>
+              <button class="download-btn" id="download-btn" aria-label="Download WAV file">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12v1.5h10V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="audio-meta">
+                <div><span class="label">Duration </span><span class="value" id="meta-duration">—</span></div>
+                <div><span class="label">Generated in </span><span class="value highlight" id="meta-speed">—</span></div>
+                <div><span class="label">Samples </span><span class="value" id="meta-samples">—</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="log-section">
+          <button class="log-toggle" id="log-toggle" aria-expanded="false" aria-controls="log-content">▸ Activity Log</button>
+          <div id="log-content" role="log"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <audio id="audio-el"></audio>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

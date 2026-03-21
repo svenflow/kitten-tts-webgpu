@@ -5,49 +5,236 @@
 import { KittenTTSEngine } from './engine.js';
 import { textToInputIds } from './phonemizer.js';
 
-const logEl = document.getElementById('log')!;
-const btnEl = document.getElementById('generate') as HTMLButtonElement;
-const textEl = document.getElementById('text') as HTMLTextAreaElement;
-const voiceEl = document.getElementById('voice') as HTMLSelectElement;
-const speedEl = document.getElementById('speed') as HTMLInputElement;
-const speedValEl = document.getElementById('speed-val')!;
-const audioEl = document.getElementById('audio') as HTMLAudioElement;
+// ── DOM Elements ──
+const loadingScreen = document.getElementById('loading-screen')!;
+const startSection = document.getElementById('start-section')!;
+const progressSection = document.getElementById('progress-section')!;
+const startBtn = document.getElementById('start-btn')!;
+const progressFill = document.getElementById('progress-fill')!;
+const progressText = document.getElementById('progress-text')!;
+const appEl = document.getElementById('app')!;
+const textInput = document.getElementById('text-input') as HTMLTextAreaElement;
+const charCount = document.getElementById('char-count')!;
+const voiceSelect = document.getElementById('voice-select') as HTMLSelectElement;
+const speedSlider = document.getElementById('speed-slider') as HTMLInputElement;
+const speedVal = document.getElementById('speed-val')!;
+const generateBtn = document.getElementById('generate-btn') as HTMLButtonElement;
+const outputSection = document.getElementById('output-section')!;
+const waveformCanvas = document.getElementById('waveform-canvas') as HTMLCanvasElement;
+const waveformWrap = document.getElementById('waveform-wrap')!;
+const playhead = document.getElementById('playhead')!;
+const playBtn = document.getElementById('play-btn')!;
+const downloadBtn = document.getElementById('download-btn')!;
+const playIcon = document.getElementById('play-icon')!;
+const pauseIcon = document.getElementById('pause-icon')!;
+const metaDuration = document.getElementById('meta-duration')!;
+const metaSpeed = document.getElementById('meta-speed')!;
+const metaSamples = document.getElementById('meta-samples')!;
+const timingIndicator = document.getElementById('timing-indicator')!;
+const logToggle = document.getElementById('log-toggle')!;
+const logContent = document.getElementById('log-content')!;
+const audioEl = document.getElementById('audio-el') as HTMLAudioElement;
 
+let engine: KittenTTSEngine | null = null;
+let lastSamples: Float32Array | null = null;
+let lastBlobUrl: string | null = null;
+
+// ── Logging ──
 function log(msg: string, type: 'info' | 'error' | 'success' = 'info') {
   const entry = document.createElement('div');
   entry.className = `log-entry log-${type}`;
-  entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  logEl.appendChild(entry);
-  logEl.scrollTop = logEl.scrollHeight;
+  const time = new Date().toLocaleTimeString();
+  entry.textContent = `[${time}] ${msg}`;
+  logContent.appendChild(entry);
+  logContent.scrollTop = logContent.scrollHeight;
   console.log(`[${type}] ${msg}`);
 }
 
-// Speed slider
-speedEl.addEventListener('input', () => {
-  speedValEl.textContent = `${speedEl.value}×`;
+// ── Character count ──
+function updateCharCount() {
+  charCount.textContent = `${textInput.value.length} chars`;
+}
+textInput.addEventListener('input', updateCharCount);
+updateCharCount();
+
+// ── Speed slider with filled track ──
+function updateSpeedSlider() {
+  const val = parseFloat(speedSlider.value);
+  speedVal.textContent = `${val.toFixed(1)}×`;
+  speedSlider.setAttribute('aria-valuetext', `${val.toFixed(1)}x`);
+  const pct = ((val - 0.5) / 1.5) * 100;
+  speedSlider.style.setProperty('--fill-pct', `${pct}%`);
+}
+speedSlider.addEventListener('input', updateSpeedSlider);
+updateSpeedSlider();
+
+// ── Log toggle ──
+logToggle.addEventListener('click', () => {
+  const isOpen = logContent.classList.toggle('open');
+  logToggle.textContent = isOpen ? '▾ Activity Log' : '▸ Activity Log';
+  logToggle.setAttribute('aria-expanded', String(isOpen));
 });
 
-async function main() {
+// ── Platform-aware shortcut hint ──
+const isMac = navigator.platform?.includes('Mac') || navigator.userAgent.includes('Mac');
+const shortcutHint = document.getElementById('shortcut-hint')!;
+shortcutHint.textContent = `${isMac ? '⌘' : 'Ctrl'} Enter to generate`;
+
+// ── Preset chips ──
+const presetChips = document.querySelectorAll('.preset-chip');
+presetChips.forEach(chip => {
+  chip.addEventListener('click', () => {
+    // Clear active state from all chips
+    presetChips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    textInput.value = (chip as HTMLElement).dataset.text || '';
+    updateCharCount();
+    textInput.focus();
+  });
+});
+
+// Clear active chip when user types
+textInput.addEventListener('input', () => {
+  presetChips.forEach(c => c.classList.remove('active'));
+});
+
+// ── Waveform drawing ──
+function drawWaveform(samples: Float32Array) {
+  const canvas = waveformCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(dpr, dpr);
+
+  const w = rect.width;
+  const h = rect.height;
+  const mid = h / 2;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Center line
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(229, 165, 75, 0.12)';
+  ctx.lineWidth = 1;
+  ctx.moveTo(0, mid);
+  ctx.lineTo(w, mid);
+  ctx.stroke();
+
+  // Draw waveform
+  const step = Math.max(1, Math.floor(samples.length / w));
+  ctx.beginPath();
+  ctx.strokeStyle = '#e5a54b';
+  ctx.lineWidth = 1.2;
+
+  for (let x = 0; x < w; x++) {
+    const idx = Math.floor((x / w) * samples.length);
+    let min = Infinity, max = -Infinity;
+    for (let j = 0; j < step && idx + j < samples.length; j++) {
+      const s = samples[idx + j];
+      if (s < min) min = s;
+      if (s > max) max = s;
+    }
+    const yMin = mid - min * mid * 0.85;
+    const yMax = mid - max * mid * 0.85;
+    ctx.moveTo(x, yMin);
+    ctx.lineTo(x, yMax);
+  }
+  ctx.stroke();
+}
+
+// ── Playback + playhead ──
+let isPlaying = false;
+
+audioEl.addEventListener('play', () => {
+  isPlaying = true;
+  playIcon.style.display = 'none';
+  pauseIcon.style.display = 'block';
+  playBtn.setAttribute('aria-label', 'Pause audio');
+  playhead.classList.add('active');
+});
+audioEl.addEventListener('pause', () => {
+  isPlaying = false;
+  playIcon.style.display = 'block';
+  pauseIcon.style.display = 'none';
+  playBtn.setAttribute('aria-label', 'Play audio');
+});
+audioEl.addEventListener('ended', () => {
+  isPlaying = false;
+  playIcon.style.display = 'block';
+  pauseIcon.style.display = 'none';
+  playBtn.setAttribute('aria-label', 'Play audio');
+  playhead.classList.remove('active');
+  playhead.style.left = '0';
+});
+
+// Update playhead position during playback
+audioEl.addEventListener('timeupdate', () => {
+  if (audioEl.duration && isFinite(audioEl.duration)) {
+    const pct = audioEl.currentTime / audioEl.duration;
+    const rect = waveformWrap.getBoundingClientRect();
+    playhead.style.left = `${pct * rect.width}px`;
+  }
+});
+
+// Click on waveform to seek
+waveformWrap.addEventListener('click', (e) => {
+  if (!audioEl.src || !audioEl.duration) return;
+  const rect = waveformWrap.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  audioEl.currentTime = pct * audioEl.duration;
+  if (!isPlaying) audioEl.play().catch(() => {});
+});
+
+playBtn.addEventListener('click', () => {
+  if (isPlaying) {
+    audioEl.pause();
+  } else {
+    audioEl.play().catch(() => {});
+  }
+});
+
+// ── Download ──
+downloadBtn.addEventListener('click', () => {
+  if (!lastBlobUrl) return;
+  const a = document.createElement('a');
+  a.href = lastBlobUrl;
+  a.download = 'kitten-tts-output.wav';
+  a.click();
+});
+
+// ── Model loading ──
+startBtn.addEventListener('click', () => {
+  startSection.style.display = 'none';
+  progressSection.style.display = 'block';
+  loadModel();
+});
+
+async function loadModel() {
   log('Initializing WebGPU...');
+  progressText.textContent = 'Initializing WebGPU…';
 
   if (!navigator.gpu) {
     log('WebGPU not available in this browser!', 'error');
+    progressText.textContent = 'WebGPU not available — try Chrome or Edge.';
     return;
   }
 
-  const engine = new KittenTTSEngine();
-  engine.profile = true; // Enable timing instrumentation
+  engine = new KittenTTSEngine();
+  engine.profile = true;
 
   try {
     await engine.init();
     log('WebGPU device ready', 'success');
   } catch (e) {
     log(`WebGPU init failed: ${e}`, 'error');
+    progressText.textContent = `WebGPU init failed: ${e}`;
     return;
   }
 
-  // Load model — use local path for dev, HuggingFace CDN for production (GitHub Pages)
-  log('Loading model weights (74.6 MB)...');
+  // Model URLs
   const HF_BASE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main';
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   const modelUrl = isLocal
@@ -57,65 +244,112 @@ async function main() {
     ? '/models/kitten-tts-mini-0.8/voices.npz'
     : `${HF_BASE}/voices.npz`;
 
+  log('Loading model weights (74.6 MB)...');
+  progressText.textContent = 'Downloading model (74.6 MB)…';
+
   try {
     const start = performance.now();
     await engine.loadModel(modelUrl, voicesUrl);
+
+    progressFill.style.width = '100%';
     const elapsed = ((performance.now() - start) / 1000).toFixed(1);
     log(`Model loaded in ${elapsed}s`, 'success');
+    progressText.textContent = `Ready — loaded in ${elapsed}s`;
+
+    // Transition to app
+    setTimeout(() => {
+      loadingScreen.classList.add('hidden');
+      appEl.classList.add('visible');
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'Generate Speech';
+      textInput.focus();
+    }, 400);
+
   } catch (e) {
     log(`Model load failed: ${e}`, 'error');
+    progressText.textContent = `Load failed: ${e}`;
+    return;
+  }
+}
+
+// ── Generation ──
+generateBtn.addEventListener('click', async () => {
+  if (!engine) return;
+
+  const text = textInput.value.trim();
+  if (!text) {
+    log('Please enter some text!', 'error');
     return;
   }
 
-  btnEl.disabled = false;
-  btnEl.textContent = 'Generate Speech';
+  generateBtn.disabled = true;
+  generateBtn.textContent = 'Generating…';
+  outputSection.classList.remove('visible');
 
-  btnEl.addEventListener('click', async () => {
-    btnEl.disabled = true;
-    btnEl.textContent = 'Generating...';
+  const voice = voiceSelect.value;
+  const speed = parseFloat(speedSlider.value);
 
-    const text = textEl.value.trim();
-    const voice = voiceEl.value;
-    const speed = parseFloat(speedEl.value);
+  log(`Generating: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}" (voice=${voice}, speed=${speed}×)`);
 
-    if (!text) {
-      log('Please enter some text!', 'error');
-      btnEl.disabled = false;
-      btnEl.textContent = 'Generate Speech';
-      return;
-    }
+  try {
+    const inputIds = textToInputIds(text);
+    log(`Phonemized: ${inputIds.length} tokens`);
 
-    log(`Generating: "${text}" (voice=${voice}, speed=${speed}×)`);
+    const start = performance.now();
+    const { waveform } = await engine.generate(inputIds, voice, speed);
+    const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+    const duration = (waveform.length / 24000).toFixed(2);
 
-    try {
-      // Phonemize
-      const inputIds = textToInputIds(text);
-      log(`Phonemized: ${inputIds.length} tokens`);
+    log(`Generated ${waveform.length} samples (${duration}s) in ${elapsed}s`, 'success');
 
-      // Run inference
-      const start = performance.now();
-      const { waveform, duration } = await engine.generate(inputIds, voice, speed);
-      const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+    // Store for resize redraw
+    lastSamples = waveform;
 
-      log(`Generated ${waveform.length} samples (${(waveform.length / 24000).toFixed(2)}s) in ${elapsed}s`, 'success');
+    // Update metadata
+    metaDuration.textContent = `${duration}s`;
+    metaSpeed.textContent = `${elapsed}s`;
+    metaSamples.textContent = waveform.length.toLocaleString();
 
-      // Convert to WAV and play
-      const wavBlob = float32ToWav(waveform, 24000);
-      const url = URL.createObjectURL(wavBlob);
-      audioEl.src = url;
-      audioEl.style.display = 'block';
-      audioEl.play();
+    // Update timing indicator in header
+    timingIndicator.textContent = `${elapsed}s`;
+    timingIndicator.classList.add('visible');
 
-    } catch (e) {
-      log(`Generation failed: ${e}`, 'error');
-    }
+    // Draw waveform
+    drawWaveform(waveform);
 
-    btnEl.disabled = false;
-    btnEl.textContent = 'Generate Speech';
-  });
-}
+    // Create audio blob
+    const wavBlob = float32ToWav(waveform, 24000);
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlobUrl = URL.createObjectURL(wavBlob);
+    audioEl.src = lastBlobUrl;
 
-/** Convert Float32Array audio to WAV blob. */
+    // Show output section with animation, let user click play
+    outputSection.classList.add('visible');
+
+  } catch (e) {
+    log(`Generation failed: ${e}`, 'error');
+  }
+
+  generateBtn.disabled = false;
+  generateBtn.textContent = 'Generate Speech';
+});
+
+// ── Keyboard shortcut ──
+textInput.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    if (!generateBtn.disabled) generateBtn.click();
+  }
+});
+
+// ── Resize handler ──
+window.addEventListener('resize', () => {
+  if (lastSamples && outputSection.classList.contains('visible')) {
+    drawWaveform(lastSamples);
+  }
+});
+
+// ── WAV encoding ──
 function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
   const numChannels = 1;
   const bitsPerSample = 16;
@@ -125,7 +359,6 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
   const buffer = new ArrayBuffer(headerSize + dataSize);
   const view = new DataView(buffer);
 
-  // WAV header
   const writeString = (offset: number, str: string) => {
     for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
   };
@@ -134,8 +367,8 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
   view.setUint32(4, 36 + dataSize, true);
   writeString(8, 'WAVE');
   writeString(12, 'fmt ');
-  view.setUint32(16, 16, true); // Subchunk1Size
-  view.setUint16(20, 1, true); // PCM
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, byteRate, true);
@@ -144,7 +377,6 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
 
-  // Convert float32 [-1,1] to int16
   let offset = headerSize;
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
@@ -154,5 +386,3 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
 
   return new Blob([buffer], { type: 'audio/wav' });
 }
-
-main();
