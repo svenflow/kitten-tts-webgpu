@@ -32,6 +32,11 @@ export class KittenTTSEngine {
   /** Uniform buffers created during dispatch, cleaned up after submit. */
   private pendingUniformBuffers: GPUBuffer[] = [];
 
+  /** CPU-side weight cache for re-uploading after freeGpuWeights().
+   *  Populated during loadModel() so we can free/re-upload GPU buffers
+   *  between generations to prevent iOS Safari jetsam kills. */
+  private weightCache: Map<string, { data: Float32Array; shape: number[]; size: number }> = new Map();
+
   /** Pending command buffers for batch submission. */
   private pendingCommandBuffers: GPUCommandBuffer[] = [];
 
@@ -318,6 +323,8 @@ export class KittenTTSEngine {
       });
       this.device.queue.writeBuffer(gpuBuffer, 0, f32Data as unknown as ArrayBuffer);
       this.weights.set(name, { buffer: gpuBuffer, shape: tensor.dims, size: totalElements });
+      // Cache CPU-side data for re-uploading after freeGpuWeights()
+      this.weightCache.set(name, { data: f32Data, shape: [...tensor.dims], size: totalElements });
       } catch (e) {
         console.error(`[KittenTTS] Error processing tensor ${name} (dims=${tensor.dims}, dtype=${tensor.dataType}, rawLen=${tensor.rawData.length}, totalEl=${totalElements}):`, e);
         throw e;
@@ -343,6 +350,10 @@ export class KittenTTSEngine {
     textLength?: number, // Raw text character count for voice style selection
     onProgress?: (stage: string) => void,
   ): Promise<{ waveform: Float32Array; duration: Int32Array }> {
+    // Ensure GPU is idle before starting — critical for iOS Safari which may not
+    // have fully reclaimed destroyed buffers from a previous generation
+    await this.device.queue.onSubmittedWorkDone();
+
     // Resolve voice alias
     const voiceKey = this.config.voiceAliases[voice] || voice;
     const voiceEmbeddings = this.voices.get(voiceKey);
@@ -2959,23 +2970,52 @@ export class KittenTTSEngine {
   }
 
   /** Free GPU weight buffers to release VRAM (~75MB).
-   *  Call after generation to prevent iOS Safari jetsam crashes.
-   *  Weights must be reloaded via loadModel() before next generate(). */
-  freeWeights(): void {
+   *  CPU-side weight cache is preserved for fast re-upload via reuploadWeights().
+   *  Call after generation to prevent iOS Safari jetsam crashes. */
+  async freeGpuWeights(): Promise<void> {
+    // Wait for all GPU work to complete before destroying buffers
+    await this.device.queue.onSubmittedWorkDone();
     let freed = 0;
     for (const tensor of this.weights.values()) {
       freed += tensor.buffer.size;
       tensor.buffer.destroy();
     }
     this.weights.clear();
-    // Also clear cached sin generator weights (CPU-side)
+    // Also clear cached sin generator weights (CPU-side, will be re-read from GPU next gen)
     this.sinGenWeights = null;
     console.log(`[KittenTTS] Freed ${(freed / 1024 / 1024).toFixed(1)}MB GPU weight buffers`);
+  }
+
+  /** Re-upload weights from CPU cache to GPU. Fast (~10-40ms).
+   *  Call before generate() if weights were freed via freeGpuWeights(). */
+  async reuploadWeights(): Promise<void> {
+    if (this.weights.size > 0) return; // Already loaded
+    if (this.weightCache.size === 0) {
+      throw new Error('[KittenTTS] No weight cache — call loadModel() first');
+    }
+    const start = performance.now();
+    for (const [name, { data, shape, size }] of this.weightCache) {
+      const gpuBuffer = this.device.createBuffer({
+        size: data.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+        label: name,
+      });
+      this.device.queue.writeBuffer(gpuBuffer, 0, data as unknown as ArrayBuffer);
+      this.weights.set(name, { buffer: gpuBuffer, shape, size });
+    }
+    await this.device.queue.onSubmittedWorkDone();
+    const elapsed = (performance.now() - start).toFixed(0);
+    console.log(`[KittenTTS] Re-uploaded ${this.weights.size} weight buffers in ${elapsed}ms`);
   }
 
   /** Check if model weights are loaded (GPU buffers alive). */
   get weightsLoaded(): boolean {
     return this.weights.size > 0;
+  }
+
+  /** Check if CPU weight cache is available for re-upload. */
+  get hasCachedWeights(): boolean {
+    return this.weightCache.size > 0;
   }
 
   /** Destroy all GPU resources. */
@@ -2984,6 +3024,7 @@ export class KittenTTSEngine {
       tensor.buffer.destroy();
     }
     this.weights.clear();
+    this.weightCache.clear();
     this.voices.clear();
   }
 }
