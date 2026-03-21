@@ -354,6 +354,10 @@ generateBtn.addEventListener('click', async () => {
       if (!logContent.classList.contains('open')) logToggle.click();
     }
 
+    // Free GPU intermediate buffers to reduce memory pressure before WAV encoding
+    log('Freeing GPU intermediates...');
+    engine.freeIntermediates?.();
+
     // Store for resize redraw
     lastSamples = waveform;
 
@@ -366,18 +370,23 @@ generateBtn.addEventListener('click', async () => {
     timingIndicator.textContent = `${elapsed}s`;
     timingIndicator.classList.add('visible');
 
-    // Draw waveform
+    log('Drawing waveform...');
     drawWaveform(waveform);
+    log('Waveform drawn');
 
     // Create audio blob
+    log('Encoding WAV...');
     const wavBlob = float32ToWav(waveform, 24000);
+    log(`WAV encoded: ${(wavBlob.size / 1024).toFixed(0)}KB`);
     if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
     lastBlobUrl = URL.createObjectURL(wavBlob);
     audioEl.src = lastBlobUrl;
 
     // Show output section with animation and auto-play
+    log('Playing audio...');
     outputSection.classList.add('visible');
     audioEl.play().catch(() => {});
+    log('Done!');
 
   } catch (e) {
     log(`Generation failed: ${e}`, 'error');
