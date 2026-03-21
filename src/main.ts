@@ -155,8 +155,10 @@ textInput.addEventListener('input', () => {
 // ── Waveform drawing ──
 function drawWaveform(samples: Float32Array) {
   const canvas = waveformCanvas;
-  const dpr = window.devicePixelRatio || 1;
+  // Cap DPR at 2 to avoid massive canvas allocations on 3x retina iPhones
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return; // Not visible yet
   canvas.width = rect.width * dpr;
   canvas.height = rect.height * dpr;
 
