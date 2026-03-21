@@ -335,8 +335,8 @@ export class KittenTTSEngine {
       });
       this.device.queue.writeBuffer(gpuBuffer, 0, f32Data as unknown as ArrayBuffer);
       this.weights.set(name, { buffer: gpuBuffer, shape: tensor.dims, size: totalElements });
-      // Cache CPU-side data for re-uploading after freeGpuWeights()
-      this.weightCache.set(name, { data: f32Data, shape: [...tensor.dims], size: totalElements });
+      // Note: not populating weightCache — weights stay in GPU permanently.
+      // This saves ~75 MB of CPU RAM (critical for iOS Safari jetsam limits).
       } catch (e) {
         console.error(`[KittenTTS] Error processing tensor ${name} (dims=${tensor.dims}, dtype=${tensor.dataType}, rawLen=${tensor.rawData.length}, totalEl=${totalElements}):`, e);
         throw e;
@@ -344,6 +344,10 @@ export class KittenTTSEngine {
     }
 
     console.log(`[KittenTTS] Uploaded ${this.weights.size} weight buffers to GPU`);
+
+    // Clear CPU-side weight cache — no longer needed since weights stay in GPU.
+    // This frees ~75 MB of CPU RAM, critical for iOS Safari jetsam limits.
+    this.weightCache.clear();
 
     // Load voices
     const voicesBuffer = await fetch(voicesUrl).then(r => r.arrayBuffer());
@@ -2436,10 +2440,9 @@ export class KittenTTSEngine {
       if (current !== input) iterBufs.push(current);
       current = resOut;
 
-      // Flush + destroy per iteration to keep peak GPU memory low.
-      // Without this, 3 iterations at 128×17881 = ~275MB accumulated.
+      // Defer destruction — buffers referenced by pending shared encoder.
+      // Caller is responsible for flushing between resblock calls.
       for (const buf of iterBufs) this.deferDestroy(buf);
-      this.flushBatchEncoder();
     }
 
     return current;
