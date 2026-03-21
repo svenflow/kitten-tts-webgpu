@@ -1317,6 +1317,9 @@ export class KittenTTSEngine {
     encoder.copyBufferToBuffer(buffer, 0, staging, 0, size * 4);
     this.device.queue.submit([encoder.finish()]);
 
+    // Wait for the GPU copy to complete before mapping — Safari crashes without this
+    await this.device.queue.onSubmittedWorkDone();
+
     await staging.mapAsync(GPUMapMode.READ);
     const result = new Float32Array(staging.getMappedRange().slice(0));
     staging.unmap();
