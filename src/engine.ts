@@ -80,14 +80,19 @@ export class KittenTTSEngine {
     this._stageStart = performance.now();
   }
 
-  /** End timing and record the stage duration (includes GPU sync). */
+  /** End timing and record the stage duration (includes GPU sync).
+   *  ALWAYS flushes batched dispatches + deferred destroys to keep peak GPU
+   *  memory low (prevents iOS Safari jetsam kills). */
   private async endStage(name: string): Promise<void> {
-    if (!this.profile) return;
-    // Flush any batched dispatches and wait for completion
+    // Always flush between stages to free intermediate GPU buffers.
+    // Without this, ALL deferred destroys accumulate until the final readBuffer,
+    // causing massive peak GPU memory that crashes iOS Safari.
     this.flushBatchEncoder();
-    await this.device.queue.onSubmittedWorkDone();
-    const elapsed = performance.now() - this._stageStart;
-    this.timings.set(name, elapsed);
+    if (this.profile) {
+      await this.device.queue.onSubmittedWorkDone();
+      const elapsed = performance.now() - this._stageStart;
+      this.timings.set(name, elapsed);
+    }
   }
 
   /** Last timing report from generate(), available after each call. */
