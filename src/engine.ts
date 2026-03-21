@@ -32,11 +32,7 @@ export class KittenTTSEngine {
   /** Uniform buffers created during dispatch, cleaned up after submit. */
   private pendingUniformBuffers: GPUBuffer[] = [];
 
-  /** Command buffer batching: collect finished command buffers and submit them together.
-   *  Each dispatch gets its own encoder (Safari doesn't like shared encoders with multiple passes).
-   *  Batching the submit() call reduces overhead from ~300 individual submits to ~10. */
-  private _pendingCommandBuffers: GPUCommandBuffer[] = [];
-  private readonly BATCH_LIMIT = 32; // Flush every N dispatches
+  /** Pending uniform buffers from dispatches, flushed at batch boundaries. */
 
   /** Cached CPU copies of sin generator weights (avoid readBuffer every inference). */
   private sinGenWeights: {
@@ -1269,23 +1265,18 @@ export class KittenTTSEngine {
     return w;
   }
 
-  /** Start batching — enables command encoder accumulation. */
+  /** Start batching — flush pending uniform buffers. */
   private beginBatch(): void {
-    // Flush any leftover batch from previous stage
-    this.flushBatch();
+    this.flushUniformBuffers();
   }
 
-  /** End batching — flush accumulated commands to GPU. */
+  /** End batching — flush pending uniform buffers. */
   private endBatch(): void {
-    this.flushBatch();
+    this.flushUniformBuffers();
   }
 
-  /** Flush accumulated command buffers to GPU. */
+  /** Flush pending state (alias for sync points). */
   private flushBatch(): void {
-    if (this._pendingCommandBuffers.length > 0) {
-      this.device.queue.submit(this._pendingCommandBuffers);
-      this._pendingCommandBuffers = [];
-    }
     this.flushUniformBuffers();
   }
 
@@ -1302,19 +1293,14 @@ export class KittenTTSEngine {
   ): void {
     const { pipeline } = this.pipelines.get(pipelineName)!;
 
-    // Each dispatch gets its own encoder (Safari rejects shared encoders with multiple passes).
-    // Command buffers are collected and submitted together to reduce queue.submit() overhead.
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
     pass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
     pass.end();
-
-    this._pendingCommandBuffers.push(encoder.finish());
-    if (this._pendingCommandBuffers.length >= this.BATCH_LIMIT) {
-      this.flushBatch();
-    }
+    this.device.queue.submit([encoder.finish()]);
+    this.flushUniformBuffers();
   }
 
   /** Read buffer contents back to CPU. */
