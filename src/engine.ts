@@ -334,6 +334,7 @@ export class KittenTTSEngine {
     voice: string = 'Bella',
     speed: number = 1.0,
     textLength?: number, // Raw text character count for voice style selection
+    onProgress?: (stage: string) => void,
   ): Promise<{ waveform: Float32Array; duration: Int32Array }> {
     // Resolve voice alias
     const voiceKey = this.config.voiceAliases[voice] || voice;
@@ -368,7 +369,7 @@ export class KittenTTSEngine {
 
     // ── 1. BERT/ALBERT Embedding ──────────────────────────────────────────
     this.startStage();
-    console.log('[KittenTTS] Running BERT embedding...');
+    onProgress?.('1/8 BERT embedding'); console.log('[KittenTTS] Running BERT embedding...');
     const wordEmbWeight = this.requireWeight('kmodel.bert.embeddings.word_embeddings.weight');
     const posEmbWeight = this.requireWeight('kmodel.bert.embeddings.position_embeddings.weight');
     const tokenTypeEmbWeight = this.requireWeight('kmodel.bert.embeddings.token_type_embeddings.weight');
@@ -415,7 +416,7 @@ export class KittenTTSEngine {
 
     // ── 2. ALBERT Encoder (shared layers) ─────────────────────────────────
     this.startStage();
-    console.log('[KittenTTS] Running ALBERT encoder...');
+    onProgress?.('2/8 ALBERT encoder'); console.log('[KittenTTS] Running ALBERT encoder...');
     const bertOutput = this.runBertEncoder(inputIdsBuf, bertEmbedding, seqLen);
     console.log(`[KittenTTS] BERT encoder output: [1, ${seqLen}, 768]`);
     // Debug: capture BERT encoder intermediates with ONNX-matching names
@@ -445,7 +446,7 @@ export class KittenTTSEngine {
 
     // ── 3. Text Encoder (CNN + LSTM) ──────────────────────────────────────
     this.startStage();
-    console.log('[KittenTTS] Running text encoder...');
+    onProgress?.('3/8 Text encoder'); console.log('[KittenTTS] Running text encoder...');
     const textEncoderOutput = await this.runTextEncoder(inputIdsBuf, seqLen);
     console.log(`[KittenTTS] Text encoder output: [${seqLen}, 2, 256]`);
 
@@ -453,7 +454,7 @@ export class KittenTTSEngine {
 
     // ── 4. Predictor Text Encoder (6 stacked bidir LSTMs + FC layers) ────
     this.startStage();
-    console.log('[KittenTTS] Running predictor text encoder...');
+    onProgress?.('4/8 Predictor encoder'); console.log('[KittenTTS] Running predictor text encoder...');
 
     // BERT output → project 768 → 512 for predictor input
     // ONNX: /bert_encoder/MatMul (768→512) + /bert_encoder/Add (bias)
@@ -590,7 +591,7 @@ export class KittenTTSEngine {
 
     // ── 5. Duration Prediction + Length Expansion ──────────────────────────
     this.startStage();
-    console.log('[KittenTTS] Running duration predictor...');
+    onProgress?.('5/8 Duration predictor'); console.log('[KittenTTS] Running duration predictor...');
 
     // ── Duration LSTM: predictor text encoder output → durations ──
     // /lstm LSTM takes concat(pred_text_features[512], style_pred[128]) = [seqLen, 640]
@@ -735,7 +736,7 @@ export class KittenTTSEngine {
     // ── F0 Prediction: 3 AdaIN ResNet blocks on shared LSTM output [512, baseFrames] ──
     this.startStage();
     this.beginBatch();
-    console.log('[KittenTTS] Running F0 predictor...');
+    onProgress?.('6/8 F0 predictor'); console.log('[KittenTTS] Running F0 predictor...');
     let f0Features = sharedTransposed; // [512, baseFrames] — same input as N predictor
     let f0Channels = 512;
     let f0Length = baseFrames;
@@ -776,7 +777,7 @@ export class KittenTTSEngine {
     // ── 6. Decoder ────────────────────────────────────────────────────────
     this.startStage();
     this.beginBatch(); // Batch all decoder dispatches
-    console.log('[KittenTTS] Running decoder...');
+    onProgress?.('7/8 Decoder'); console.log('[KittenTTS] Running decoder...');
 
     // F0_conv: conv1d(1→1, k=3, stride=2, pad=1) — downsamples f0Length→baseFrames
     // CRITICAL: stride=2 downsampling from doubled predictor resolution back to base
@@ -884,7 +885,7 @@ export class KittenTTSEngine {
 
     // ── 7. HiFi-GAN Generator ─────────────────────────────────────────────
     this.startStage();
-    console.log('[KittenTTS] Running HiFi-GAN...');
+    onProgress?.('8/8 HiFi-GAN'); console.log('[KittenTTS] Running HiFi-GAN...');
     this.beginBatch(); // Batch 1: LeakyReLU + ups.0
 
     let genFeatures = decodeOut!; // [512, totalFrames]

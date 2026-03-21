@@ -332,7 +332,10 @@ generateBtn.addEventListener('click', async () => {
     log(`Phonemized: ${inputIds.length} tokens (${method})`);
 
     const start = performance.now();
-    const { waveform } = await engine.generate(inputIds, voice, speed, text.length);
+    const { waveform } = await engine.generate(inputIds, voice, speed, text.length, (stage) => {
+      generateBtn.textContent = stage;
+      log(`Stage: ${stage}`);
+    });
     const elapsed = ((performance.now() - start) / 1000).toFixed(2);
     const duration = (waveform.length / 24000).toFixed(2);
 
