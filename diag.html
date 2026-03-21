@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kitten TTS — Pipeline Diagnostic</title>
+  <style>
+    body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 16px; margin: 0; font-size: 13px; }
+    h1 { font-size: 18px; color: #d4a853; margin: 0 0 8px; }
+    p.sub { color: #888; margin: 0 0 12px; font-size: 11px; }
+    .log { white-space: pre-wrap; line-height: 1.6; }
+    .ok { color: #4caf50; }
+    .err { color: #f44336; }
+    .warn { color: #ff9800; }
+    .info { color: #90caf9; }
+    #status { font-size: 14px; margin: 8px 0; padding: 8px; border-radius: 4px; }
+    .running { background: #1a3a5c; }
+    .done { background: #1a3c1a; }
+    .failed { background: #3c1a1a; }
+    audio { width: 100%; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>TTS Pipeline Diagnostic</h1>
+  <p class="sub">Loads real model, runs each stage with GPU sync, reports timing</p>
+  <audio id="audio" controls style="display:none"></audio>
+  <div id="status" class="running">Starting...</div>
+  <div id="log" class="log"></div>
+  <script type="module" src="./src/diag.ts"></script>
+</body>
+</html>
