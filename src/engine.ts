@@ -32,7 +32,9 @@ export class KittenTTSEngine {
   /** Uniform buffers created during dispatch, cleaned up after submit. */
   private pendingUniformBuffers: GPUBuffer[] = [];
 
-  /** Pending uniform buffers from dispatches, flushed at batch boundaries. */
+  /** Shared command encoder for batching dispatches (iOS Safari crashes with 177+ individual submits). */
+  private batchEncoder: GPUCommandEncoder | null = null;
+  private batchPass: GPUComputePass | null = null;
 
   /** Cached CPU copies of sin generator weights (avoid readBuffer every inference). */
   private sinGenWeights: {
@@ -70,7 +72,8 @@ export class KittenTTSEngine {
   /** End timing and record the stage duration (includes GPU sync). */
   private async endStage(name: string): Promise<void> {
     if (!this.profile) return;
-    // Flush GPU work and wait for completion
+    // Flush any batched dispatches and wait for completion
+    this.flushBatchEncoder();
     await this.device.queue.onSubmittedWorkDone();
     const elapsed = performance.now() - this._stageStart;
     this.timings.set(name, elapsed);
@@ -422,6 +425,8 @@ export class KittenTTSEngine {
     // ── 2. ALBERT Encoder (shared layers) ─────────────────────────────────
     this.startStage();
     onProgress?.('2/8 ALBERT encoder'); console.log('[KittenTTS] Running ALBERT encoder...');
+    // Flush pending embedding dispatches before BERT creates its own encoder
+    this.flushBatchEncoder();
     const bertOutput = this.runBertEncoder(inputIdsBuf, bertEmbedding, seqLen);
     console.log(`[KittenTTS] BERT encoder output: [1, ${seqLen}, 768]`);
     // Debug: capture BERT encoder intermediates with ONNX-matching names
@@ -1254,31 +1259,21 @@ export class KittenTTSEngine {
     return w;
   }
 
-  /** Pending uniform buffers from dispatches, flushed at batch boundaries. */
+  /** No-op — legacy batch boundaries. All dispatches now batch into one encoder
+   *  and flush at readBuffer() boundaries. */
+  private beginBatch(): void {}
+  private endBatch(): void {}
+  private flushBatch(): void {}
 
-  /** Start batching — flush pending uniform buffers. */
-  private beginBatch(): void {
-    this.flushUniformBuffers();
-  }
-
-  /** End batching — flush pending uniform buffers. */
-  private endBatch(): void {
-    this.flushUniformBuffers();
-  }
-
-  /** Flush pending state (alias for sync points). */
-  private flushBatch(): void {
-    this.flushUniformBuffers();
-  }
-
-  /** No-op for compatibility — batching reverted for Safari. */
+  /** Submit all accumulated dispatches and flush uniform buffers. */
   private submitBatch(): void {
-    this.flushUniformBuffers();
+    this.flushBatchEncoder();
   }
 
   /**
-   * Execute a single dispatch on a pipeline.
-   * Each dispatch gets its own encoder and submit (Safari compatibility).
+   * Execute a dispatch on a pipeline, batching into a shared command encoder.
+   * Dispatches accumulate until flushBatchEncoder() is called (at readBuffer boundaries).
+   * This reduces 177+ individual submits to ~5, preventing iOS Safari crashes.
    */
   private dispatchSingle(
     pipelineName: string,
@@ -1289,24 +1284,34 @@ export class KittenTTSEngine {
   ): void {
     const { pipeline } = this.pipelines.get(pipelineName)!;
 
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
+    // Lazily create the shared encoder/pass
+    if (!this.batchEncoder) {
+      this.batchEncoder = this.device.createCommandEncoder({ label: 'batch_encoder' });
+      this.batchPass = this.batchEncoder.beginComputePass({ label: 'batch_pass' });
+    }
 
+    this.batchPass!.setPipeline(pipeline);
+    this.batchPass!.setBindGroup(0, bindGroup);
+    this.batchPass!.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
+  }
+
+  /** Flush the batched command encoder — submit all accumulated dispatches. */
+  private flushBatchEncoder(): void {
+    if (this.batchPass) {
+      this.batchPass.end();
+      this.batchPass = null;
+    }
+    if (this.batchEncoder) {
+      this.device.queue.submit([this.batchEncoder.finish()]);
+      this.batchEncoder = null;
+    }
     this.flushUniformBuffers();
   }
 
   /** Read buffer contents back to CPU. */
   private async readBuffer(buffer: GPUBuffer, size: number): Promise<Float32Array> {
-    // Submit any batched dispatches before reading back
-    this.submitBatch();
-    this.flushUniformBuffers();
-    // Ensure all previous GPU work is done before reading
-    await this.device.queue.onSubmittedWorkDone();
+    // Flush any batched dispatches before reading back
+    this.flushBatchEncoder();
 
     const staging = this.device.createBuffer({
       size: size * 4,
