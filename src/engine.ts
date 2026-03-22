@@ -1309,9 +1309,19 @@ export class KittenTTSEngine {
     this.pendingUniformBuffers = [];
   }
 
-  /** Get a weight tensor, throwing a descriptive error if missing. */
+  /** Get a weight tensor, throwing a descriptive error if missing.
+   *  Handles cross-model weight name differences: micro/nano models may store
+   *  some weights with/without `_quantized` suffix depending on their quantization. */
   private requireWeight(name: string): GpuTensor {
-    const w = this.weights.get(name);
+    let w = this.weights.get(name);
+    if (!w && name.endsWith('_quantized')) {
+      // Micro/nano may store these as f16/f32 (no _quantized suffix)
+      w = this.weights.get(name.slice(0, -'_quantized'.length));
+    }
+    if (!w && !name.endsWith('_quantized')) {
+      // Micro may quantize weights that mini stores as f16
+      w = this.weights.get(name + '_quantized');
+    }
     if (!w) throw new Error(`[KittenTTS] Missing weight: ${name}`);
     return w;
   }
