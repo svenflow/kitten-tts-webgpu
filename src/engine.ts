@@ -47,6 +47,13 @@ export class KittenTTSEngine {
   /** Buffers to destroy after the shared encoder is submitted. */
   private deferredDestroys: GPUBuffer[] = [];
 
+  /** Buffer pool: reuse GPU buffers by byte size instead of destroy+reallocate.
+   *  Key insight: reusing buffers avoids Metal accumulating dead references to
+   *  destroyed buffers, which is the root cause of iOS jetsam kills. */
+  private bufferPool: Map<number, GPUBuffer[]> = new Map();
+  /** Buffers to return to pool (not destroy) after the next shared encoder flush. */
+  private deferredPoolReturns: GPUBuffer[] = [];
+
   /** Cached CPU copies of sin generator weights (avoid readBuffer every inference). */
   private sinGenWeights: {
     linearWeight: Float32Array;   // [9] — harmonic collapse linear layer
@@ -1058,15 +1065,13 @@ export class KittenTTSEngine {
     this.deferDestroy(nr1Out);
     genFeatures = noisyPad;
 
-    // Flush + GPU sync to free noise_res.1 intermediates AND force Metal to reclaim
-    // memory before the high-resolution resblocks.2+3 (largest GPU memory section).
+    // Flush to free noise_res.1 intermediates before high-res resblocks.2+3.
+    // No GPU sync needed — buffer pool reuses buffers instead of destroy+reallocate,
+    // so Metal doesn't accumulate dead references to destroyed buffers.
     this.flushBatchEncoder();
-    await this.device.queue.onSubmittedWorkDone();
 
     // ── resblocks.2 + resblocks.3: parallel residual blocks, output averaged ──
     const resblock2 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.2');
-    // GPU sync between resblocks to force Metal memory reclamation at high resolution
-    await this.device.queue.onSubmittedWorkDone();
     const resblock3 = await this.runHiFiGANResBlock(genFeatures, styleDec, genChannels, genLength, 'kmodel.decoder.generator.resblocks.3');
 
     const resSum1 = this.createEmptyBuffer(genChannels * genLength, 'res_sum1');
@@ -1156,6 +1161,8 @@ export class KittenTTSEngine {
     this.deferDestroy(sharedTransposed);  // leaked: never in predIntermediates
     // Final flush: destroy deferred buffers + remaining uniform buffers
     this.flushBatchEncoder();
+    // Destroy pooled buffers — they've served their purpose for this generation.
+    this.destroyPool();
 
     return { waveform: finalWaveform, duration: durations };
   }
@@ -1374,12 +1381,44 @@ export class KittenTTSEngine {
       buf.destroy();
     }
     this.deferredDestroys.length = 0;
+    // Return pooled buffers for reuse (NOT destroyed — Metal has no dead refs to accumulate)
+    for (const buf of this.deferredPoolReturns) {
+      const byteSize = buf.size;
+      let pool = this.bufferPool.get(byteSize);
+      if (!pool) { pool = []; this.bufferPool.set(byteSize, pool); }
+      pool.push(buf);
+    }
+    this.deferredPoolReturns.length = 0;
     this.flushUniformBuffers();
   }
 
   /** Flush uniform buffers and shared encoder. */
   private flushBatchEncoder(): void {
     this.flushSharedEncoder();
+  }
+
+  /** Get a buffer from the pool (or allocate new) — same size buffers are reused. */
+  private poolGet(elements: number, label: string): GPUBuffer {
+    const byteSize = elements * 4;
+    const pool = this.bufferPool.get(byteSize);
+    if (pool && pool.length > 0) {
+      return pool.pop()!;
+    }
+    return this.createEmptyBuffer(elements, label);
+  }
+
+  /** Queue a buffer to return to pool after the next shared encoder flush.
+   *  Unlike deferDestroy, the buffer is kept alive for reuse. */
+  private poolReturn(buffer: GPUBuffer): void {
+    this.deferredPoolReturns.push(buffer);
+  }
+
+  /** Destroy all pooled buffers (call when pool is no longer needed). */
+  private destroyPool(): void {
+    for (const [, bufs] of this.bufferPool) {
+      for (const buf of bufs) buf.destroy();
+    }
+    this.bufferPool.clear();
   }
 
   /** Read buffer contents back to CPU. */
@@ -2375,29 +2414,29 @@ export class KittenTTSEngine {
     let current = input;
 
     for (let i = 0; i < 3; i++) {
-      // Destroy intermediates per-iteration to reduce peak GPU memory.
-      // At 128×17881 (ups.1 resolution), each buffer is ~9MB.
-      // Accumulating all 3 iterations = ~275MB; per-iteration = ~91MB peak. Critical for iOS.
-      const iterBufs: GPUBuffer[] = [];
+      // Use buffer pool: reuse GPU buffers across iterations instead of destroy+reallocate.
+      // This avoids Metal accumulating dead references to destroyed buffers (iOS jetsam root cause).
+      // After flush, pooled buffers return to pool for next iteration — same GPU memory reused.
+      const iterPoolBufs: GPUBuffer[] = []; // Buffers to return to pool after flush
 
       // ── InstanceNorm → AdaIN1 → Snake(alpha1) ──
-      const norm1 = this.createEmptyBuffer(channels * length, `hifi_norm1_${i}`);
+      const norm1 = this.poolGet(channels * length, `hifi_norm1_${i}`);
       this.dispatchInstanceNorm(current, norm1, channels, length, 1e-5);
 
       const adain1FcWeight = this.requireWeight(`${prefix}.adain1.${i}.fc.weight_quantized`);
       const adain1FcBias = this.requireWeight(`${prefix}.adain1.${i}.fc.bias`);
-      const adain1Style = this.createEmptyBuffer(adain1FcBias.size, `hifi_adain1_style_${i}`);
+      const adain1Style = this.poolGet(adain1FcBias.size, `hifi_adain1_style_${i}`);
       this.dispatchMatmul(style, adain1FcWeight.buffer, adain1FcBias.buffer, adain1Style, 1, 128, adain1FcBias.size, true);
 
-      const adain1Out = this.createEmptyBuffer(channels * length, `hifi_adain1_${i}`);
+      const adain1Out = this.poolGet(channels * length, `hifi_adain1_${i}`);
       this.dispatchAdaIN(norm1, adain1Style, adain1Out, channels, length);
-      iterBufs.push(norm1, adain1Style);
+      iterPoolBufs.push(norm1, adain1Style);
 
       // Snake activation: x + (1/alpha) * sin²(alpha * x)
       const alpha1Weight = this.requireWeight(`${prefix}.alpha1.${i}`);
-      const snake1Out = this.createEmptyBuffer(channels * length, `hifi_snake1_${i}`);
+      const snake1Out = this.poolGet(channels * length, `hifi_snake1_${i}`);
       this.dispatchSnake(adain1Out, alpha1Weight.buffer, snake1Out, channels, length);
-      iterBufs.push(adain1Out);
+      iterPoolBufs.push(adain1Out);
 
       // ── conv1 (dilated) ──
       const conv1Weight = this.requireWeight(`${prefix}.convs1.${i}.weight_quantized`);
@@ -2405,52 +2444,50 @@ export class KittenTTSEngine {
       const kernelSize = conv1Weight.shape[2];
       const dilation = [1, 3, 5][i];
       const padding = Math.floor((kernelSize * dilation - dilation) / 2);
-      const conv1Out = this.createEmptyBuffer(channels * length, `hifi_conv1_${i}`);
+      const conv1Out = this.poolGet(channels * length, `hifi_conv1_${i}`);
       this.dispatchConv1d(snake1Out, conv1Weight.buffer, conv1Bias.buffer, conv1Out, channels, channels, kernelSize, length, length, padding, 1, dilation, true);
-      iterBufs.push(snake1Out);
+      iterPoolBufs.push(snake1Out);
 
       // ── InstanceNorm → AdaIN2 → Snake(alpha2) ──
-      const norm2 = this.createEmptyBuffer(channels * length, `hifi_norm2_${i}`);
+      const norm2 = this.poolGet(channels * length, `hifi_norm2_${i}`);
       this.dispatchInstanceNorm(conv1Out, norm2, channels, length, 1e-5);
 
       const adain2FcWeight = this.requireWeight(`${prefix}.adain2.${i}.fc.weight_quantized`);
       const adain2FcBias = this.requireWeight(`${prefix}.adain2.${i}.fc.bias`);
-      const adain2Style = this.createEmptyBuffer(adain2FcBias.size, `hifi_adain2_style_${i}`);
+      const adain2Style = this.poolGet(adain2FcBias.size, `hifi_adain2_style_${i}`);
       this.dispatchMatmul(style, adain2FcWeight.buffer, adain2FcBias.buffer, adain2Style, 1, 128, adain2FcBias.size, true);
 
-      const adain2Out = this.createEmptyBuffer(channels * length, `hifi_adain2_${i}`);
+      const adain2Out = this.poolGet(channels * length, `hifi_adain2_${i}`);
       this.dispatchAdaIN(norm2, adain2Style, adain2Out, channels, length);
-      iterBufs.push(conv1Out, norm2, adain2Style);
+      iterPoolBufs.push(conv1Out, norm2, adain2Style);
 
       // Snake activation
       const alpha2Weight = this.requireWeight(`${prefix}.alpha2.${i}`);
-      const snake2Out = this.createEmptyBuffer(channels * length, `hifi_snake2_${i}`);
+      const snake2Out = this.poolGet(channels * length, `hifi_snake2_${i}`);
       this.dispatchSnake(adain2Out, alpha2Weight.buffer, snake2Out, channels, length);
-      iterBufs.push(adain2Out);
+      iterPoolBufs.push(adain2Out);
 
       // ── conv2 ──
       const conv2Weight = this.requireWeight(`${prefix}.convs2.${i}.weight_quantized`);
       const conv2Bias = this.requireWeight(`${prefix}.convs2.${i}.bias`);
       const k2 = conv2Weight.shape[2];
       const pad2 = Math.floor((k2 - 1) / 2);
-      const conv2Out = this.createEmptyBuffer(channels * length, `hifi_conv2_${i}`);
+      const conv2Out = this.poolGet(channels * length, `hifi_conv2_${i}`);
       this.dispatchConv1d(snake2Out, conv2Weight.buffer, conv2Bias.buffer, conv2Out, channels, channels, k2, length, length, pad2, 1, 1, true);
-      iterBufs.push(snake2Out);
+      iterPoolBufs.push(snake2Out);
 
       // ── Simple residual: output = conv2 + input ──
-      const resOut = this.createEmptyBuffer(channels * length, `hifi_res_${i}`);
+      const resOut = this.poolGet(channels * length, `hifi_res_${i}`);
       this.dispatchAdd(conv2Out, current, resOut, channels * length);
-      iterBufs.push(conv2Out);
-      if (current !== input) iterBufs.push(current);
+      iterPoolBufs.push(conv2Out);
+      if (current !== input) iterPoolBufs.push(current);
       current = resOut;
 
-      // Defer destruction — buffers referenced by pending shared encoder.
-      for (const buf of iterBufs) this.deferDestroy(buf);
+      // Return intermediates to pool after flush (NOT destroyed — Metal has no dead refs).
+      for (const buf of iterPoolBufs) this.poolReturn(buf);
 
-      // Flush after each iteration to free GPU memory immediately.
-      // Without this, 3 iterations accumulate ~390 MB of deferred destroys
-      // at ups.1 resolution (128 × 28000 × 4B × 9 bufs × 3 iters).
-      // Per-iteration flush keeps peak at ~130 MB. Critical for iOS jetsam.
+      // Flush after each iteration so pool buffers become available for next iteration.
+      // Per-iteration flush keeps peak at ~130 MB (vs ~390 MB if accumulated).
       this.flushBatchEncoder();
     }
 
