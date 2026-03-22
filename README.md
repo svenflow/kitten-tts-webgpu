@@ -156,7 +156,7 @@ Most browser TTS uses ONNX Runtime Web (~2MB WASM binary + C++ runtime). This pr
 
 **Bundle size?** 753KB gzipped (2.9MB raw). Includes engine, 29 compute shaders, and 234K-word phonemizer dictionary. Model weights (24–78MB depending on model size) are downloaded separately at runtime on first call and cached by the browser.
 
-**Model license?** Kitten TTS models are released under [Apache 2.0](https://huggingface.co/KittenML/kitten-tts-mini-0.8). Code in this repo is MIT.
+**Model license?** Kitten TTS models are released under [Apache 2.0](https://huggingface.co/KittenML/kitten-tts-mini-0.8). Code in this repo is Apache 2.0.
 
 ## Development
 
@@ -177,4 +177,4 @@ npm test          # Phonemizer tests
 
 ## License
 
-MIT
+Apache-2.0

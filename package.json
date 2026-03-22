@@ -34,7 +34,7 @@
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "phonemizer": "^1.2.1"
   },
