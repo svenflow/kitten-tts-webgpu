@@ -41,7 +41,7 @@ const playBtn = document.getElementById('play-btn')!;
 const downloadBtn = document.getElementById('download-btn')!;
 const playIcon = document.getElementById('play-icon')!;
 const pauseIcon = document.getElementById('pause-icon')!;
-const metaModel = document.getElementById('meta-model')!;
+const modelIndicator = document.getElementById('model-indicator')!;
 const metaDuration = document.getElementById('meta-duration')!;
 const metaSpeed = document.getElementById('meta-speed')!;
 const metaSamples = document.getElementById('meta-samples')!;
@@ -417,7 +417,8 @@ generateBtn.addEventListener('click', async () => {
 
     // Update metadata
     const m = getSelectedModel();
-    metaModel.textContent = `${m.key.charAt(0).toUpperCase() + m.key.slice(1)} (${m.params})`;
+    modelIndicator.textContent = `${m.key.charAt(0).toUpperCase() + m.key.slice(1)} ${m.params}`;
+    modelIndicator.style.opacity = '1';
     metaDuration.textContent = `${duration}s`;
     metaSpeed.textContent = `${elapsed}s`;
     metaSamples.textContent = waveform.length.toLocaleString();
