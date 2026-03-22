@@ -449,12 +449,19 @@
       <circle cx="12" cy="12" r="4"/>
     </svg>
     <div class="loading-title">Kitten TTS</div>
-    <div class="loading-subtitle">80M parameter text-to-speech · WebGPU</div>
+    <div class="loading-subtitle" id="loading-subtitle">80M parameter text-to-speech · WebGPU</div>
 
     <div id="start-section" style="text-align:center;">
+      <div style="margin-bottom:20px;">
+        <select id="model-select" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-family:var(--font-ui);font-size:14px;cursor:pointer;outline:none;">
+          <option value="mini">Mini (80M) — 78 MB, best quality</option>
+          <option value="micro">Micro (40M) — 41 MB</option>
+          <option value="nano">Nano (15M) — 24 MB, fastest</option>
+        </select>
+      </div>
       <button id="start-btn">Start</button>
-      <div class="start-subtext">
-        Downloads 74.6 MB model to run locally in your browser.<br>
+      <div class="start-subtext" id="start-subtext">
+        Downloads 78 MB model to run locally in your browser.<br>
         No data leaves your device.
       </div>
       <div class="loading-links">

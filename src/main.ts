@@ -26,11 +26,23 @@ import { KittenTTSEngine } from './engine.js';
 import { textToInputIds } from './phonemizer.js';
 import { float32ToWav } from './wav.js';
 
+// ── Model variants ──
+const MODELS: Record<string, { url: string; localPath: string; size: string; params: string }> = {
+  mini:  { url: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/kitten_tts_mini_v0_8.onnx',        localPath: '/models/kitten-tts-mini-0.8/kitten_tts_mini_v0_8.onnx',     size: '78 MB',  params: '80M' },
+  micro: { url: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/kitten_tts_micro_v0_8.onnx',      localPath: '/models/kitten-tts-micro-0.8/kitten_tts_micro_v0_8.onnx',   size: '41 MB',  params: '40M' },
+  nano:  { url: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/kitten_tts_nano_v0_8.onnx',   localPath: '/models/kitten-tts-nano-0.8-int8/kitten_tts_nano_v0_8.onnx', size: '24 MB',  params: '15M' },
+};
+const VOICES_URL_REMOTE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/voices.npz';
+const VOICES_URL_LOCAL = '/models/kitten-tts-mini-0.8/voices.npz';
+
 // ── DOM Elements ──
 const loadingScreen = document.getElementById('loading-screen')!;
 const startSection = document.getElementById('start-section')!;
 const progressSection = document.getElementById('progress-section')!;
 const startBtn = document.getElementById('start-btn')!;
+const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+const loadingSubtitle = document.getElementById('loading-subtitle')!;
+const startSubtext = document.getElementById('start-subtext')!;
 const progressFill = document.getElementById('progress-fill')!;
 const progressText = document.getElementById('progress-text')!;
 const appEl = document.getElementById('app')!;
@@ -55,6 +67,26 @@ const timingIndicator = document.getElementById('timing-indicator')!;
 const logToggle = document.getElementById('log-toggle')!;
 const logContent = document.getElementById('log-content')!;
 const audioEl = document.getElementById('audio-el') as HTMLAudioElement;
+
+// ── Model selector logic ──
+// Support ?model=nano URL param
+const urlModel = new URLSearchParams(location.search).get('model');
+if (urlModel && urlModel in MODELS) {
+  modelSelect.value = urlModel;
+}
+
+function getSelectedModel() {
+  const key = modelSelect.value || 'mini';
+  return { key, ...MODELS[key] };
+}
+
+function updateModelInfo() {
+  const m = getSelectedModel();
+  loadingSubtitle.textContent = `${m.params} parameter text-to-speech · WebGPU`;
+  startSubtext.innerHTML = `Downloads ${m.size} model to run locally in your browser.<br>No data leaves your device.`;
+}
+modelSelect.addEventListener('change', updateModelInfo);
+updateModelInfo();
 
 let engine: KittenTTSEngine | null = null;
 let lastSamples: Float32Array | null = null;
@@ -306,18 +338,17 @@ async function loadModel() {
     return;
   }
 
-  // Model URLs
-  const HF_BASE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main';
+  // Model URLs — use selected model variant
+  const selected = getSelectedModel();
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  modelUrl = isLocal
-    ? '/models/kitten-tts-mini-0.8/kitten_tts_mini_v0_8.onnx'
-    : `${HF_BASE}/kitten_tts_mini_v0_8.onnx`;
-  voicesUrl = isLocal
-    ? '/models/kitten-tts-mini-0.8/voices.npz'
-    : `${HF_BASE}/voices.npz`;
+  modelUrl = isLocal ? selected.localPath : selected.url;
+  voicesUrl = isLocal ? VOICES_URL_LOCAL : VOICES_URL_REMOTE;
 
-  log('Loading model weights (74.6 MB)...');
-  progressText.textContent = 'Downloading model (74.6 MB)…';
+  // Disable selector once loading starts
+  modelSelect.disabled = true;
+
+  log(`Loading ${selected.key} model weights (${selected.size})...`);
+  progressText.textContent = `Downloading ${selected.key} model (${selected.size})…`;
 
   try {
     const start = performance.now();

@@ -36,55 +36,69 @@ import { KittenTTSEngine } from './engine.js';
 import { textToInputIds } from './phonemizer.js';
 import { float32ToWav } from './wav.js';
 
+/** Model size variant. Default: `'mini'`. */
+export type ModelSize = 'mini' | 'micro' | 'nano';
+
 /** Options for the `textToSpeech` function. */
 export interface TextToSpeechOptions {
   /** Voice name. Default: `'Bella'`. */
   voice?: string;
   /** Speaking speed multiplier. Default: `1.0`. Range: 0.5 – 2.0. */
   speed?: number;
+  /** Model size variant. Default: `'mini'` (80M, best quality). `'micro'` (40M) and `'nano'` (15M) are smaller/faster. */
+  model?: ModelSize;
   /** Progress callback, called with stage descriptions like `'Loading model…'`. */
   onProgress?: (stage: string) => void;
 }
 
-const HF_BASE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main';
-const MODEL_URL = `${HF_BASE}/kitten_tts_mini_v0_8.onnx`;
-const VOICES_URL = `${HF_BASE}/voices.npz`;
+const MODEL_URLS: Record<ModelSize, { url: string; size: string; params: string }> = {
+  mini:  { url: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/kitten_tts_mini_v0_8.onnx',      size: '78 MB',  params: '80M' },
+  micro: { url: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/kitten_tts_micro_v0_8.onnx',    size: '41 MB',  params: '40M' },
+  nano:  { url: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/kitten_tts_nano_v0_8.onnx', size: '24 MB',  params: '15M' },
+};
+const VOICES_URL = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/voices.npz';
 
-/** Singleton engine, lazily initialized on first call. */
-let engine: KittenTTSEngine | null = null;
-let initPromise: Promise<KittenTTSEngine> | null = null;
+/** Per-model singleton engines, lazily initialized. */
+const engines = new Map<ModelSize, KittenTTSEngine>();
+const initPromises = new Map<ModelSize, Promise<KittenTTSEngine>>();
 
 /**
- * Get or initialize the singleton engine.
- * Safe to call concurrently — only one init runs.
+ * Get or initialize an engine for the given model size.
+ * Safe to call concurrently — only one init runs per model.
  */
-async function getEngine(onProgress?: (stage: string) => void): Promise<KittenTTSEngine> {
-  if (engine) return engine;
-  if (initPromise) return initPromise;
+async function getEngine(model: ModelSize = 'mini', onProgress?: (stage: string) => void): Promise<KittenTTSEngine> {
+  const existing = engines.get(model);
+  if (existing) return existing;
 
-  initPromise = (async () => {
+  const pending = initPromises.get(model);
+  if (pending) return pending;
+
+  const promise = (async () => {
     if (!navigator.gpu) {
       throw new Error(
         'WebGPU is not available. Use a browser that supports WebGPU (Chrome 113+, Edge 113+, or Safari 18+).'
       );
     }
 
+    const cfg = MODEL_URLS[model];
     onProgress?.('Initializing WebGPU…');
     const e = new KittenTTSEngine();
     await e.init();
 
-    onProgress?.('Downloading model (74.6 MB)…');
-    await e.loadModel(MODEL_URL, VOICES_URL);
+    onProgress?.(`Downloading ${model} model (${cfg.size})…`);
+    await e.loadModel(cfg.url, VOICES_URL);
 
-    engine = e;
+    engines.set(model, e);
     return e;
   })();
 
+  initPromises.set(model, promise);
+
   try {
-    return await initPromise;
+    return await promise;
   } catch (err) {
     // Reset so a retry can succeed
-    initPromise = null;
+    initPromises.delete(model);
     throw err;
   }
 }
@@ -126,9 +140,9 @@ export async function textToSpeech(
     throw new Error('Text must be a non-empty string.');
   }
 
-  const { voice = 'Bella', speed = 1.0, onProgress } = options ?? {};
+  const { voice = 'Bella', speed = 1.0, model = 'mini', onProgress } = options ?? {};
 
-  const e = await getEngine(onProgress);
+  const e = await getEngine(model, onProgress);
 
   onProgress?.('Phonemizing…');
   const { ids: inputIds } = await textToInputIds(text);
