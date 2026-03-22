@@ -9,13 +9,16 @@
   "exports": {
     ".": {
       "types": "./dist-lib/index.d.ts",
-      "import": "./dist-lib/index.js"
+      "import": "./dist-lib/index.js",
+      "default": "./dist-lib/index.js"
     }
   },
-  "sideEffects": true,
+  "sideEffects": [
+    "./dist-lib/index.js"
+  ],
   "files": [
     "dist-lib",
-    "src"
+    "LICENSE"
   ],
   "scripts": {
     "dev": "vite",

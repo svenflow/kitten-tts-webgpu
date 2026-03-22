@@ -3,24 +3,8 @@
  * with explicit GPU syncs and timing to identify where iOS Safari hangs.
  */
 
-// Safari ReadableStream polyfill (needed for WASM phonemizer)
-if (
-  typeof ReadableStream !== 'undefined' &&
-  !ReadableStream.prototype[Symbol.asyncIterator]
-) {
-  (ReadableStream.prototype as any)[Symbol.asyncIterator] = async function* () {
-    const reader = this.getReader();
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        yield value;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  };
-}
+import { installStreamPolyfill } from './polyfills.js';
+installStreamPolyfill();
 
 import { KittenTTSEngine } from './engine.js';
 import { textToInputIds } from './phonemizer.js';

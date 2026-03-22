@@ -2,25 +2,8 @@
  * Main entry point for Kitten TTS WebGPU demo.
  */
 
-// Polyfill: Safari lacks ReadableStream async iterator support,
-// which phonemizer.js needs for WASM decompression (see phonemizer.js#2)
-if (
-  typeof ReadableStream !== 'undefined' &&
-  !ReadableStream.prototype[Symbol.asyncIterator]
-) {
-  (ReadableStream.prototype as any)[Symbol.asyncIterator] = async function* () {
-    const reader = this.getReader();
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        yield value;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  };
-}
+import { installStreamPolyfill } from './polyfills.js';
+installStreamPolyfill();
 
 import { KittenTTSEngine } from './engine.js';
 import { textToInputIds } from './phonemizer.js';
