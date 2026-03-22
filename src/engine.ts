@@ -995,10 +995,10 @@ export class KittenTTSEngine {
     this.deferDestroy(genFeatures);
     genFeatures = resAvg0;
 
-    // Flush + GPU sync to free resblocks.0+1 intermediates before ups.1 upsample.
-    // GPU sync forces Metal to reclaim memory before the 6x resolution increase.
+    // Flush to free resblocks.0+1 intermediates before ups.1 upsample.
+    // No GPU sync needed here — resblocks.0+1 are at low resolution (256×4680 = ~4.8MB/buffer).
+    // Metal retains refs but total is ~130MB which fits within budget.
     this.flushBatchEncoder();
-    await this.device.queue.onSubmittedWorkDone();
 
     // ── LeakyReLU(0.1) before ups.1 (ONNX: LeakyRelu_1 after resblock average) ──
     const preUps1Leaky = this.createEmptyBuffer(genChannels * genLength, 'pre_ups1_leaky');
