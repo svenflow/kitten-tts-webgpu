@@ -1,12 +1,28 @@
 {
   "name": "webgpu-kitten-tts",
   "version": "0.1.0",
-  "description": "Run Kitten TTS (80M) locally in the browser via WebGPU. Zero dependencies.",
+  "description": "Run Kitten TTS (80M) locally in the browser via WebGPU. One function call: textToWav('Hello!') → WAV blob.",
   "type": "module",
+  "main": "./dist-lib/index.js",
+  "module": "./dist-lib/index.js",
+  "types": "./dist-lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist-lib/index.d.ts",
+      "import": "./dist-lib/index.js"
+    }
+  },
+  "sideEffects": true,
+  "files": [
+    "dist-lib",
+    "src"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:lib": "BUILD_LIB=1 vite build && tsc --project tsconfig.lib.json",
     "preview": "vite preview",
+    "prepublishOnly": "npm run build:lib",
     "test": "npx tsx tests/phonemizer.test.ts"
   },
   "devDependencies": {
@@ -17,5 +33,17 @@
   "license": "MIT",
   "dependencies": {
     "phonemizer": "^1.2.1"
+  },
+  "keywords": [
+    "tts",
+    "text-to-speech",
+    "webgpu",
+    "browser",
+    "kitten-tts",
+    "speech-synthesis"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/svenflow/webgpu-kitten-tts"
   }
 }
