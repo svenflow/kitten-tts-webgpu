@@ -27,13 +27,11 @@ import { textToInputIds } from './phonemizer.js';
 import { float32ToWav } from './wav.js';
 
 // ── Model variants ──
-const MODELS: Record<string, { url: string; localPath: string; size: string; params: string }> = {
-  mini:  { url: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/kitten_tts_mini_v0_8.onnx',        localPath: '/models/kitten-tts-mini-0.8/kitten_tts_mini_v0_8.onnx',     size: '78 MB',  params: '80M' },
-  micro: { url: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/kitten_tts_micro_v0_8.onnx',      localPath: '/models/kitten-tts-micro-0.8/kitten_tts_micro_v0_8.onnx',   size: '41 MB',  params: '40M' },
-  nano:  { url: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/kitten_tts_nano_v0_8.onnx',   localPath: '/models/kitten-tts-nano-0.8-int8/kitten_tts_nano_v0_8.onnx', size: '24 MB',  params: '15M' },
+const MODELS: Record<string, { url: string; localPath: string; size: string; params: string; voicesUrl: string; voicesLocalPath: string }> = {
+  mini:  { url: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/kitten_tts_mini_v0_8.onnx',        localPath: '/models/kitten-tts-mini-0.8/kitten_tts_mini_v0_8.onnx',     size: '78 MB',  params: '80M', voicesUrl: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/voices.npz',      voicesLocalPath: '/models/kitten-tts-mini-0.8/voices.npz' },
+  micro: { url: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/kitten_tts_micro_v0_8.onnx',      localPath: '/models/kitten-tts-micro-0.8/kitten_tts_micro_v0_8.onnx',   size: '41 MB',  params: '40M', voicesUrl: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/voices.npz',    voicesLocalPath: '/models/kitten-tts-micro-0.8/voices.npz' },
+  nano:  { url: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/kitten_tts_nano_v0_8.onnx',   localPath: '/models/kitten-tts-nano-0.8-int8/kitten_tts_nano_v0_8.onnx', size: '24 MB',  params: '15M', voicesUrl: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/voices.npz', voicesLocalPath: '/models/kitten-tts-nano-0.8/voices.npz' },
 };
-const VOICES_URL_REMOTE = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/voices.npz';
-const VOICES_URL_LOCAL = '/models/kitten-tts-mini-0.8/voices.npz';
 
 // ── DOM Elements ──
 const loadingScreen = document.getElementById('loading-screen')!;
@@ -342,7 +340,7 @@ async function loadModel() {
   const selected = getSelectedModel();
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   modelUrl = isLocal ? selected.localPath : selected.url;
-  voicesUrl = isLocal ? VOICES_URL_LOCAL : VOICES_URL_REMOTE;
+  voicesUrl = isLocal ? selected.voicesLocalPath : selected.voicesUrl;
 
   // Disable selector once loading starts
   modelSelect.disabled = true;

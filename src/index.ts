@@ -51,12 +51,11 @@ export interface TextToSpeechOptions {
   onProgress?: (stage: string) => void;
 }
 
-const MODEL_URLS: Record<ModelSize, { url: string; size: string; params: string }> = {
-  mini:  { url: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/kitten_tts_mini_v0_8.onnx',      size: '78 MB',  params: '80M' },
-  micro: { url: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/kitten_tts_micro_v0_8.onnx',    size: '41 MB',  params: '40M' },
-  nano:  { url: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/kitten_tts_nano_v0_8.onnx', size: '24 MB',  params: '15M' },
+const MODEL_URLS: Record<ModelSize, { url: string; voicesUrl: string; size: string; params: string }> = {
+  mini:  { url: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/kitten_tts_mini_v0_8.onnx',      voicesUrl: 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/voices.npz',      size: '78 MB',  params: '80M' },
+  micro: { url: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/kitten_tts_micro_v0_8.onnx',    voicesUrl: 'https://huggingface.co/KittenML/kitten-tts-micro-0.8/resolve/main/voices.npz',    size: '41 MB',  params: '40M' },
+  nano:  { url: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/kitten_tts_nano_v0_8.onnx', voicesUrl: 'https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/resolve/main/voices.npz', size: '24 MB',  params: '15M' },
 };
-const VOICES_URL = 'https://huggingface.co/KittenML/kitten-tts-mini-0.8/resolve/main/voices.npz';
 
 /** Per-model singleton engines, lazily initialized. */
 const engines = new Map<ModelSize, KittenTTSEngine>();
@@ -86,7 +85,7 @@ async function getEngine(model: ModelSize = 'mini', onProgress?: (stage: string)
     await e.init();
 
     onProgress?.(`Downloading ${model} model (${cfg.size})…`);
-    await e.loadModel(cfg.url, VOICES_URL);
+    await e.loadModel(cfg.url, cfg.voicesUrl);
 
     engines.set(model, e);
     return e;
