@@ -42,17 +42,17 @@ The JS bundle includes the WebGPU engine, 29 compute shaders, and a 234K-word ph
 
 Three [Kitten TTS v0.8](https://huggingface.co/KittenML) sizes, same API:
 
-| Model | Params | Weights | M4 Pro (Chrome) | iPhone 17 Pro Max (Safari) |
-|-------|--------|---------|------------------|----------------------------|
-| **Mini** | 80M | 78 MB | 1.80s (3.3× RT) | ~1.2s |
-| **Micro** | 40M | 41 MB | 1.05s (6.2× RT) | — |
-| **Nano** | 15M | 24 MB | 0.93s (7.3× RT) | — |
+| Model | Params | Download | M4 Pro (Chrome) | iPhone 17 Pro Max (Safari) |
+|-------|--------|----------|------------------|----------------------------|
+| **Mini** | 80M | 78 MB | 3.3× RT | 1.3× RT |
+| **Micro** | 40M | 43 MB | 6.2× RT | 3.4× RT |
+| **Nano** | 15M | 26 MB | 7.3× RT | 4.8× RT |
 
-*RT = real-time factor (audio duration ÷ generation time). Higher is better. Times are for warm generation (model already in GPU). First call adds ~2-4s for model download depending on connection.*
+*RT = real-time factor (audio duration ÷ generation time). Higher is better. Download = ONNX weights + voices. Times are for warm generation (model already in GPU).*
 
 ```typescript
-await textToSpeech("Hello world");                        // Default: nano (fastest, 24 MB)
-await textToSpeech("Hello world", { model: 'micro' });    // Balanced (41 MB)
+await textToSpeech("Hello world");                        // Default: nano (fastest, 26 MB)
+await textToSpeech("Hello world", { model: 'micro' });    // Balanced (43 MB)
 await textToSpeech("Hello world", { model: 'mini' });     // Best quality (78 MB)
 ```
 
